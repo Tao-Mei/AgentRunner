@@ -1,0 +1,6 @@
+args <- commandArgs(trailingOnly = TRUE)
+data <- read.csv(args[1])
+item_count <- ncol(data)
+total <- rowSums(data)
+alpha <- item_count / (item_count - 1) * (1 - sum(apply(data, 2, var)) / var(total))
+write.csv(data.frame(metric = "cronbach_alpha", value = alpha), args[2], row.names = FALSE)

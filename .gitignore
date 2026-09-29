@@ -1,0 +1,29 @@
+# Internal planning documents; keep these local and out of Git history.
+/AgentRunner 开发计划.md
+/AgentRunner 开发者手册.md
+
+# Local Runner state, probe output, downloaded models, and credentials.
+/.agentrunner/
+/probes/.probe-state/
+.env
+.env.*
+*.sqlite
+*.sqlite-*
+*.db
+ui-token
+
+# Python and build output.
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+
+# Editor and OS files.
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
