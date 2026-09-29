@@ -2,7 +2,8 @@
 
 | 任务关键词 | 首读文件 | 按需继续读取 |
 | --- | --- | --- |
-| 项目简介、本地试用、当前边界 | [README](README.md) | [本地契约](agentrunner/contract.md) |
+| 中文项目简介、本地试用、当前边界 | [中文 README](README.zh-CN.md) | [本地契约](agentrunner/contract.md) |
+| 英文项目简介与试用入口 | [English README](README.md) | [中文 README](README.zh-CN.md) |
 | 命令、状态、事件与恢复契约 | [本地契约](agentrunner/contract.md) | [本地运行时路由](agentrunner/structure.md) |
 | 本地 CLI、进程、持久化、回调 | [本地运行时 README](agentrunner/README.md) | [本地运行时路由](agentrunner/structure.md) |
 | 回调重复识别 Skill | [agent-runner-callback Skill](.agents/skills/agent-runner-callback/SKILL.md) | [本地契约](agentrunner/contract.md)的回调段落 |

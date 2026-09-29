@@ -16,6 +16,7 @@ def main() -> None:
     source.mkdir(parents=True)
     shutil.copy2(root / "pyproject.toml", source / "pyproject.toml")
     shutil.copy2(root / "README.md", source / "README.md")
+    shutil.copy2(root / "README.zh-CN.md", source / "README.zh-CN.md")
     shutil.copy2(root / "LICENSE", source / "LICENSE")
     shutil.copy2(root / "NOTICE", source / "NOTICE")
     shutil.copytree(root / "agentrunner", source / "agentrunner",
