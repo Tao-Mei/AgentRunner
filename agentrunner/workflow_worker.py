@@ -103,8 +103,10 @@ def run_dag(job_id: str, spec: dict) -> str:
             steps = [row for row in store.list_steps(job_id) if not row["is_finalizer"]]
             by_id = {row["step_id"]: row for row in steps}
             cancelled = bool(job["cancel_requested"])
+            stopping = bool(job["stop_after_current_requested"])
+            paused = bool(job["pause_requested"])
             failed = any(row["status"] in {"FAILED", "TIMED_OUT"} for row in steps)
-            if not cancelled and not failed:
+            if not cancelled and not stopping and not paused and not failed:
                 active_bases = [by_id[step_id]["spec"]["base"] for step_id in active.values()]
                 for step in steps:
                     if len(active) >= spec["max_parallel"]:
@@ -124,7 +126,7 @@ def run_dag(job_id: str, spec: dict) -> str:
                     future = pool.submit(execute_step, job_id, step, cwd)
                     active[future] = step["step_id"]
             if not active:
-                if cancelled or failed or all(row["status"] == "COMPLETED" for row in steps):
+                if cancelled or stopping or failed or all(row["status"] == "COMPLETED" for row in steps):
                     break
                 time.sleep(0.5)
                 continue
@@ -137,10 +139,14 @@ def run_dag(job_id: str, spec: dict) -> str:
                     store.finish_step(job_id, step_id, "FAILED", error=f"Worker future: {type(exc).__name__}: {exc}")
     remaining = [row for row in store.list_steps(job_id) if not row["is_finalizer"] and row["status"] == "PENDING"]
     for step in remaining:
-        store.finish_step(job_id, step["step_id"], "SKIPPED", error="Dependency failed or workflow cancelled")
+        store.finish_step(job_id, step["step_id"], "SKIPPED", error="Dependency failed or workflow stopped")
     if store.get_job(job_id)["cancel_requested"]:
         return "CANCELLED"
     rows = [row for row in store.list_steps(job_id) if not row["is_finalizer"]]
+    if any(row["status"] in {"FAILED", "TIMED_OUT"} for row in rows):
+        return "FAILED"
+    if store.get_job(job_id)["stop_after_current_requested"]:
+        return "CANCELLED"
     return "FAILED" if any(row["status"] != "COMPLETED" for row in rows) else "COMPLETED"
 
 

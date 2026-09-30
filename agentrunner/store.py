@@ -61,6 +61,8 @@ def connect() -> sqlite3.Connection:
             resume_claimed_at TEXT,
             resume_count INTEGER NOT NULL DEFAULT 0,
             cancel_requested INTEGER NOT NULL DEFAULT 0,
+            pause_requested INTEGER NOT NULL DEFAULT 0,
+            stop_after_current_requested INTEGER NOT NULL DEFAULT 0,
             exit_code INTEGER,
             callback_thread TEXT,
             event_id TEXT NOT NULL,
@@ -109,6 +111,13 @@ def connect() -> sqlite3.Connection:
             PRIMARY KEY (name, slot)
         );
         CREATE INDEX IF NOT EXISTS resource_leases_job ON resource_leases(job_id, step_id);
+        CREATE TABLE IF NOT EXISTS desktop_instance (
+            slot INTEGER PRIMARY KEY CHECK (slot = 1),
+            pid INTEGER NOT NULL,
+            process_create_time REAL NOT NULL,
+            request_seq INTEGER NOT NULL DEFAULT 0,
+            requested_job_id TEXT
+        );
         CREATE TABLE IF NOT EXISTS callback_receipts (
             job_id TEXT NOT NULL,
             event_id TEXT NOT NULL,
@@ -119,6 +128,17 @@ def connect() -> sqlite3.Connection:
             claims INTEGER NOT NULL DEFAULT 1,
             PRIMARY KEY (job_id, event_id)
         );
+        CREATE TABLE IF NOT EXISTS goal_handoffs (
+            job_id TEXT PRIMARY KEY,
+            event_id TEXT NOT NULL,
+            thread_id TEXT NOT NULL,
+            state TEXT NOT NULL,
+            original_json TEXT,
+            paused_json TEXT,
+            error TEXT
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS goal_handoff_thread ON goal_handoffs(thread_id)
+            WHERE state IN ('PREPARING','PAUSED','RESUMING','UNKNOWN');
         """
     )
     columns = {row[1] for row in con.execute("PRAGMA table_info(jobs)")}
@@ -128,6 +148,8 @@ def connect() -> sqlite3.Connection:
         ("worker_create_time", "REAL"),
         ("child_create_time", "REAL"),
         ("cancel_requested", "INTEGER NOT NULL DEFAULT 0"),
+        ("pause_requested", "INTEGER NOT NULL DEFAULT 0"),
+        ("stop_after_current_requested", "INTEGER NOT NULL DEFAULT 0"),
         ("callback_attempts", "INTEGER NOT NULL DEFAULT 0"),
         ("callback_updated_at", "TEXT"),
         ("callback_next_at", "TEXT"),
@@ -141,6 +163,46 @@ def connect() -> sqlite3.Connection:
         if name not in columns:
             con.execute(f"ALTER TABLE jobs ADD COLUMN {name} {declaration}")
     return con
+
+
+def claim_desktop(requested_job_id: str | None = None) -> tuple[bool, int]:
+    """Claim the single desktop process or persist a request to show an existing one."""
+    from . import processes
+
+    pid = os.getpid()
+    created = processes.created_at(pid)
+    if created is None:
+        raise RuntimeError("Cannot verify desktop process identity")
+    with connect() as con:
+        con.execute("BEGIN IMMEDIATE")
+        row = con.execute("SELECT * FROM desktop_instance WHERE slot = 1").fetchone()
+        if row is not None and processes.same_process(row["pid"], row["process_create_time"]) is not False:
+            sequence = row["request_seq"] + 1
+            con.execute("UPDATE desktop_instance SET request_seq = ?, requested_job_id = ? WHERE slot = 1",
+                        (sequence, requested_job_id))
+            return False, sequence
+        con.execute(
+            "INSERT OR REPLACE INTO desktop_instance "
+            "(slot, pid, process_create_time, request_seq, requested_job_id) VALUES (1, ?, ?, 0, ?)",
+            (pid, created, requested_job_id),
+        )
+        return True, 0
+
+
+def desktop_show_request() -> tuple[int, str | None]:
+    with connect() as con:
+        row = con.execute("SELECT request_seq, requested_job_id FROM desktop_instance WHERE slot = 1").fetchone()
+    return (row["request_seq"], row["requested_job_id"]) if row is not None else (0, None)
+
+
+def release_desktop() -> None:
+    from . import processes
+
+    created = processes.created_at(os.getpid())
+    if created is not None:
+        with connect() as con:
+            con.execute("DELETE FROM desktop_instance WHERE slot = 1 AND pid = ? AND process_create_time = ?",
+                        (os.getpid(), created))
 
 
 def create_job(job: dict[str, Any]) -> None:
@@ -182,7 +244,8 @@ def get_job(job_id: str) -> dict[str, Any] | None:
 def list_jobs() -> list[dict[str, Any]]:
     with connect() as con:
         rows = con.execute(
-            "SELECT id, kind, name, status, created_at, started_at, finished_at, exit_code FROM jobs ORDER BY created_at DESC"
+            "SELECT id, kind, name, status, callback_status, created_at, started_at, finished_at, exit_code "
+            "FROM jobs ORDER BY created_at DESC"
         ).fetchall()
     return [dict(row) for row in rows]
 
@@ -240,10 +303,17 @@ def start_step(job_id: str, step_id: str) -> bool:
     try:
         con.execute("BEGIN IMMEDIATE")
         row = con.execute(
-            "SELECT status, spec_json, not_before FROM workflow_steps WHERE job_id = ? AND step_id = ?",
+            "SELECT status, spec_json, not_before, is_finalizer FROM workflow_steps WHERE job_id = ? AND step_id = ?",
             (job_id, step_id),
         ).fetchone()
         if row is None or row["status"] != "PENDING" or (row["not_before"] and row["not_before"] > utc_now()):
+            con.rollback()
+            return False
+        job = con.execute("SELECT status, cancel_requested, pause_requested, stop_after_current_requested "
+                          "FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        if job is None or (not row["is_finalizer"] and
+                           (job["status"] != "RUNNING" or job["cancel_requested"] or
+                            job["pause_requested"] or job["stop_after_current_requested"])):
             con.rollback()
             return False
         spec = json.loads(row["spec_json"])
@@ -449,6 +519,42 @@ def request_cancel(job_id: str) -> bool:
         return True
 
 
+def set_workflow_control(job_id: str, action: str) -> bool:
+    """Atomically change scheduling, without freezing or killing active steps."""
+    if action not in {"pause", "continue", "stop-after-current"}:
+        raise ValueError("Invalid workflow control")
+    with connect() as con:
+        con.execute("BEGIN IMMEDIATE")
+        row = con.execute(
+            "SELECT kind, status, cancel_requested, pause_requested, stop_after_current_requested "
+            "FROM jobs WHERE id = ?", (job_id,),
+        ).fetchone()
+        if row is None or row["kind"] != "workflow" or row["status"] != "RUNNING" or row["cancel_requested"]:
+            return False
+        if action == "pause":
+            if row["stop_after_current_requested"]:
+                return False
+            if row["pause_requested"]:
+                return True
+            con.execute("UPDATE jobs SET pause_requested = 1 WHERE id = ?", (job_id,))
+            event = "scheduling_paused"
+        elif action == "continue":
+            if row["stop_after_current_requested"]:
+                return False
+            if not row["pause_requested"]:
+                return True
+            con.execute("UPDATE jobs SET pause_requested = 0 WHERE id = ?", (job_id,))
+            event = "scheduling_resumed"
+        else:
+            if row["stop_after_current_requested"]:
+                return True
+            con.execute("UPDATE jobs SET stop_after_current_requested = 1, pause_requested = 0 WHERE id = ?", (job_id,))
+            event = "stop_after_current_requested"
+        con.execute("INSERT INTO events (job_id, at, kind, detail_json) VALUES (?, ?, ?, '{}')",
+                    (job_id, utc_now(), event))
+        return True
+
+
 def clear_cancel_request(job_id: str, reason: str) -> None:
     with connect() as con:
         con.execute("UPDATE jobs SET cancel_requested = 0 WHERE id = ? AND status IN ('CREATED','RUNNING')", (job_id,))
@@ -568,6 +674,9 @@ def claim_callback_event(job_id: str, event_id: str, status: str, thread_id: str
         ).fetchone()
         result = {"job_id": job_id, "event_id": event_id, "job_status": status,
                   "exit_code": job["exit_code"], "callback_status": job["callback_status"]}
+        handoff = con.execute("SELECT state FROM goal_handoffs WHERE job_id = ?", (job_id,)).fetchone()
+        if handoff:
+            result["goal_handoff"] = handoff["state"]
         if row and row["state"] == "HANDLED":
             return {**result, "result": "duplicate"}
         if row and datetime.fromisoformat(row["claimed_at"]) + timedelta(minutes=5) > datetime.now(timezone.utc):

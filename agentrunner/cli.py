@@ -14,7 +14,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import callback, environment, processes, store
+from . import callback, codex_command, environment, log_text, processes, store
 
 
 THREAD_ID = re.compile(r"^[0-9a-fA-F-]{36}$")
@@ -45,6 +45,13 @@ def preflight(command: list[str], cwd: str, thread: str | None) -> Path:
 def launch_worker(job_id: str, event_id: str, module: str) -> tuple[dict[str, str], subprocess.Popen[bytes] | None]:
     env = os.environ.copy()
     env["AGENTRUNNER_HOME"] = str(store.home())
+    if getattr(sys, "frozen", False):
+        mode = {"agentrunner.worker": "_worker", "agentrunner.workflow_worker": "_workflow_worker"}[module]
+        worker_command = [sys.executable, mode, job_id]
+        worker_cwd = store.job_dir(job_id)
+    else:
+        worker_command = [sys.executable, "-m", module, job_id]
+        worker_cwd = Path(__file__).resolve().parent.parent
     flags = 0
     kwargs: dict[str, object] = {}
     if os.name == "nt":
@@ -54,8 +61,8 @@ def launch_worker(job_id: str, event_id: str, module: str) -> tuple[dict[str, st
     try:
         with (store.job_dir(job_id) / "worker.log").open("wb") as worker_log:
             worker = subprocess.Popen(
-                [sys.executable, "-m", module, job_id],
-                cwd=str(Path(__file__).resolve().parent.parent), env=env,
+                worker_command,
+                cwd=str(worker_cwd), env=env,
                 stdin=subprocess.DEVNULL, stdout=worker_log, stderr=worker_log,
                 close_fds=True, creationflags=flags, **kwargs,
             )
@@ -87,6 +94,8 @@ def submit(command: list[str], cwd: str, thread: str | None,
         watch = []
     if not isinstance(watch, list) or not all(isinstance(pattern, str) and pattern for pattern in watch):
         raise ValueError("watch must be a list of file patterns")
+    if thread:
+        codex_command.remember()
     job_id = "JOB-" + uuid.uuid4().hex[:12]
     event_id = "EVT-" + uuid.uuid4().hex[:16]
     store.create_job({"id": job_id, "event_id": event_id, "command": command, "cwd": str(directory),
@@ -99,12 +108,33 @@ def submit_workflow(path: str, cwd: str | None, thread: str | None) -> tuple[dic
     if thread and not THREAD_ID.fullmatch(thread):
         raise ValueError("Callback thread must be a UUID")
     spec = workflow.load(path, cwd)
+    if thread:
+        codex_command.remember()
     job_id = "JOB-" + uuid.uuid4().hex[:12]
     event_id = "EVT-" + uuid.uuid4().hex[:16]
     store.create_workflow_job(
         {"id": job_id, "event_id": event_id, "cwd": spec["cwd"], "callback_thread": thread}, spec,
     )
     return launch_worker(job_id, event_id, "agentrunner.workflow_worker")
+
+
+def reveal_installed_runner(result: dict[str, object]) -> None:
+    """Keep an accepted Job running even if the optional user surface fails."""
+    if not getattr(sys, "frozen", False):
+        return
+    from .launcher import ensure_service, show_desktop
+
+    warnings = []
+    try:
+        ensure_service()
+    except Exception as exc:
+        warnings.append(f"service: {type(exc).__name__}: {exc}")
+    try:
+        show_desktop(str(result["job_id"]))
+    except Exception as exc:
+        warnings.append(f"desktop: {type(exc).__name__}: {exc}")
+    if warnings:
+        result["surface_warnings"] = warnings
 
 
 def finished_result(job_id: str) -> dict[str, object]:
@@ -247,6 +277,7 @@ def main(argv: list[str] | None = None) -> int:
     run_parser = sub.add_parser("run", help="Submit a local command to a detached worker")
     run_parser.add_argument("--cwd", default=".")
     run_parser.add_argument("--callback-thread")
+    run_parser.add_argument("--pause-goal", action="store_true", help="With explicit human authorization, pause an active Codex goal after handoff (experimental)")
     run_parser.add_argument("--pass-env", action="append", default=[])
     run_parser.add_argument("--watch", action="append", default=[])
     run_parser.add_argument("command", nargs=argparse.REMAINDER)
@@ -262,6 +293,9 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("reconcile", help="Mark jobs whose supervisor identity cannot be confirmed")
     serve_parser = sub.add_parser("serve", help="Run the local status API and browser UI")
     serve_parser.add_argument("--port", type=int, default=8765)
+    desktop_parser = sub.add_parser("desktop", help="Open the local desktop task window (requires PySide6)")
+    desktop_parser.add_argument("--show-job")
+    sub.add_parser("service-stop", help="Stop an idle local Service before upgrade or uninstall")
     ui_parser = sub.add_parser("ui", help="Print a local UI URL with an access token")
     ui_parser.add_argument("--port", type=int, default=8765)
     show_parser = sub.add_parser("show", help="Show a job and its events")
@@ -281,12 +315,28 @@ def main(argv: list[str] | None = None) -> int:
     ack_parser.add_argument("job_id")
     ack_parser.add_argument("event_id")
     ack_parser.add_argument("--claim-token", required=True)
+    goal_parser = sub.add_parser("goal-release", help="Restore a goal paused by this Job after handling its callback (experimental)")
+    goal_parser.add_argument("job_id")
+    goal_parser.add_argument("event_id")
+    goal_parser.add_argument("--claim-token", required=True)
+    goal_parser.add_argument("--thread-id", required=True)
+    dismiss_parser = sub.add_parser("goal-dismiss", help="After human recovery, forget a terminal Job's goal ownership; never changes Codex")
+    dismiss_parser.add_argument("job_id")
+    dismiss_parser.add_argument("--confirm-manual-recovery", action="store_true", required=True)
     cancel_parser = sub.add_parser("cancel", help="Request cancellation of a running job")
     cancel_parser.add_argument("job_id")
+    for action, help_text in (
+        ("pause-scheduling", "Pause scheduling new workflow steps; active steps continue"),
+        ("continue-scheduling", "Resume a paused workflow's next steps"),
+        ("stop-after-current", "Finish active workflow steps, skip remaining steps, then run finalizers"),
+    ):
+        control_parser = sub.add_parser(action, help=help_text)
+        control_parser.add_argument("job_id")
     submit_parser = sub.add_parser("submit", help="Validate and submit a local workflow YAML")
     submit_parser.add_argument("workflow")
     submit_parser.add_argument("--cwd")
     submit_parser.add_argument("--callback-thread")
+    submit_parser.add_argument("--pause-goal", action="store_true")
     resume_parser = sub.add_parser("resume", help="Resume an UNKNOWN workflow from a verified checkpoint")
     resume_parser.add_argument("job_id")
     resolve_parser = sub.add_parser("resolve-step", help="Record a decision for an unconfirmed workflow step")
@@ -300,6 +350,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         if args.action in {"run", "exec"}:
+            if getattr(args, "pause_goal", False) and not args.callback_thread:
+                raise ValueError("--pause-goal requires --callback-thread")
+            if getattr(args, "pause_goal", False):
+                from . import goal_handoff
+                goal_handoff.ensure_available(args.callback_thread)
             if args.action == "exec" and (args.grace_seconds < 0 or args.grace_seconds > 300):
                 raise ValueError("Grace seconds must be between 0 and 300")
             result, worker = submit(command_args(args.command), args.cwd, args.callback_thread, args.pass_env, args.watch)
@@ -318,12 +373,32 @@ def main(argv: list[str] | None = None) -> int:
                     result = finished_result(result["job_id"])
             elif result["status"] == "ACCEPTED":
                 result["handoff"] = "Job is owned by the detached worker; do not poll it from the Agent turn"
+            if result["status"] in {"ACCEPTED", "PROMOTED_TO_BACKGROUND"}:
+                reveal_installed_runner(result)
+                if getattr(args, "pause_goal", False):
+                    from . import goal_handoff
+                    try:
+                        result["goal_handoff"] = goal_handoff.pause(result["job_id"])
+                    except Exception as exc:
+                        result["goal_handoff"] = {"status": "UNAVAILABLE", "error": str(exc)}
             print(json.dumps(result, ensure_ascii=False))
             return 0 if result["status"] in {"ACCEPTED", "PROMOTED_TO_BACKGROUND", "COMPLETED"} else 1
         if args.action == "submit":
+            if args.pause_goal and not args.callback_thread:
+                raise ValueError("--pause-goal requires --callback-thread")
+            if args.pause_goal:
+                from . import goal_handoff
+                goal_handoff.ensure_available(args.callback_thread)
             result, _ = submit_workflow(args.workflow, args.cwd, args.callback_thread)
             if result["status"] == "ACCEPTED":
                 result["handoff"] = "Workflow is owned by the detached supervisor; do not poll it from the Agent turn"
+                reveal_installed_runner(result)
+                if args.pause_goal:
+                    from . import goal_handoff
+                    try:
+                        result["goal_handoff"] = goal_handoff.pause(result["job_id"])
+                    except Exception as exc:
+                        result["goal_handoff"] = {"status": "UNAVAILABLE", "error": str(exc)}
             print(json.dumps(result, ensure_ascii=False))
             return 0 if result["status"] == "ACCEPTED" else 1
         if args.action == "resume":
@@ -345,6 +420,15 @@ def main(argv: list[str] | None = None) -> int:
             acknowledged = store.acknowledge_callback_event(args.job_id, args.event_id, args.claim_token)
             print(json.dumps({"acknowledged": acknowledged}))
             return 0 if acknowledged else 2
+        if args.action == "goal-release":
+            from . import goal_handoff
+            result = goal_handoff.release(args.job_id, args.event_id, args.claim_token, args.thread_id)
+            print(json.dumps(result, ensure_ascii=False))
+            return 0 if result["status"] in {"RELEASED", "NOT_REQUESTED", "NOT_ACTIVE"} else 2
+        if args.action == "goal-dismiss":
+            from . import goal_handoff
+            print(json.dumps(goal_handoff.dismiss(args.job_id)))
+            return 0
         if args.action == "jobs":
             print(json.dumps(store.list_jobs(), ensure_ascii=False, indent=2))
             return 0
@@ -355,6 +439,21 @@ def main(argv: list[str] | None = None) -> int:
             from .server import serve
             serve(args.port)
             return 0
+        if args.action == "desktop":
+            if getattr(sys, "frozen", False):
+                from .launcher import show_desktop
+
+                show_desktop(args.show_job)
+                return 0
+            from .desktop import main as desktop_main
+
+            return desktop_main(["--show-job", args.show_job] if args.show_job else [])
+        if args.action == "service-stop":
+            from .launcher import stop_service
+
+            result = stop_service()
+            print(json.dumps(result))
+            return 2 if result["status"] == "BLOCKED" else 0
         if args.action == "ui":
             from .server import access_token
             print(f"http://127.0.0.1:{args.port}/#token={access_token()}")
@@ -363,6 +462,10 @@ def main(argv: list[str] | None = None) -> int:
         if job is None:
             raise ValueError(f"Unknown job: {args.job_id}")
         if args.action == "show":
+            from . import goal_handoff
+            handoff = goal_handoff.record(args.job_id)
+            if handoff:
+                job["goal_handoff"] = {"status": handoff["state"], "error": handoff["error"]}
             job["events"] = store.list_events(args.job_id)
             if job["kind"] == "workflow":
                 job["steps"] = store.list_steps(args.job_id)
@@ -378,7 +481,9 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 path = store.job_dir(args.job_id) / f"{args.stream}.log"
             if path.exists():
-                sys.stdout.write(path.read_text(encoding="utf-8", errors="replace"))
+                if hasattr(sys.stdout, "reconfigure"):
+                    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+                sys.stdout.write(log_text.decode_output(path.read_bytes()))
             return 0
         if args.action == "callback-retry":
             print(json.dumps({"callback_status": callback.deliver(args.job_id, force=True)}))
@@ -387,7 +492,13 @@ def main(argv: list[str] | None = None) -> int:
             result, code = cancel_job(job["id"])
             print(json.dumps(result))
             return code
-    except (OSError, ValueError) as exc:
+        if args.action in {"pause-scheduling", "continue-scheduling", "stop-after-current"}:
+            action = {"pause-scheduling": "pause", "continue-scheduling": "continue",
+                      "stop-after-current": "stop-after-current"}[args.action]
+            accepted = store.set_workflow_control(job["id"], action)
+            print(json.dumps({"job_id": job["id"], "control": action, "accepted": accepted}))
+            return 0 if accepted else 2
+    except (OSError, RuntimeError, ValueError) as exc:
         print(f"runner: {exc}", file=sys.stderr)
         return 2
     return 2

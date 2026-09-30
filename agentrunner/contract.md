@@ -1,4 +1,4 @@
-# 本地 v0.1 命令、状态与事件契约
+# 本地命令、状态与事件契约
 
 入口：`python -m agentrunner`；CLI 成功响应为 JSON，查询命令 `jobs` / `show` 为 JSON，`logs` 为原始文本。命令使用 `--` 分隔 Runner 参数与待执行程序参数。`AGENTRUNNER_HOME` 未设置时使用用户目录下的 `.agentrunner`。CLI、Service 和 worker 必须指向同一个数据目录。
 
@@ -19,6 +19,20 @@
 
 `show JOB-ID` 返回 Job 字段、`events`；Workflow 还返回 `steps`，各 Step 含 `attempts`、`exit_code`、`error`、`artifacts`。产物条目记录相对路径、字节数和修改时间。`logs JOB-ID [--step STEP-ID] --stream stdout|stderr|worker` 读取对应落盘日志。`cancel JOB-ID` 请求取消，不意味着返回时进程已经退出。Service API 可提交、观察和控制 Runner Job；页面可观察与取消任务，均不改变 Job 的执行所有权。
 
+v0.2 的 Workflow 调度控制：`pause-scheduling JOB-ID` 只暂停**新步骤**调度，正在运行的步骤继续；`continue-scheduling JOB-ID` 恢复该调度；`stop-after-current JOB-ID` 等当前活跃步骤结束后跳过剩余普通步骤、运行 Finalizer，Job 最终为 `CANCELLED`（若已有步骤失败则为 `FAILED`）。这三个命令只接受 `RUNNING` 的 Workflow；`cancel` 仍是立即请求终止活跃普通步骤。`show` 中的 `pause_requested` 与 `stop_after_current_requested` 是持久控制标记；事件分别记为 `scheduling_paused`、`scheduling_resumed`、`stop_after_current_requested`。它们均不冻结子进程。
+
+安装版维护命令 `service-stop` 仅在没有活跃/结果不明 Job 和待投递回调时让本机 Service 正常退出，用于升级或卸载前检查；返回 `STOPPED` 或 `NOT_RUNNING`。窗口关闭与 Service 停止都不会改变已落盘任务状态。
+
 事件按 `{at, kind, detail}` 返回，`at` 为 UTC ISO 时间；同一 Job 按 SQLite 事件 ID 顺序呈现。主要事件包括 `created`、`process_started` / `process_exited`、`workflow_started` / `workflow_finished`、`step_started` / `step_finished` / `step_retry_scheduled`、`cancel_requested`、`finalizing`、`process_identity_unconfirmed`、`step_unknown` / `step_resolved`、`resume_claimed`、`callback_pending` / `callback_sending` / `callback_sent` / `callback_unknown`、`callback_handling_claimed` / `callback_handling_acknowledged`。Observer 另外写入 `structured_stage`、`structured_progress`、`structured_heartbeat`、`process_observed` 和 `file_observed`；没有输出不等于失败。
 
 恢复命令：`reconcile` 核对 PID 与创建时间；结果不明时 `UNKNOWN`，并保留在途 Step 的资源锁。`stop-orphan` 仅终止身份核实的失联子进程；`resolve-step` 要求外部核对依据，`retry` 还要求 `safe_to_retry: true` 和剩余次数。`resume` 只从无未确认在途步骤的检查点继续。回调处理使用 `callback-claim` 核验 Job/event/status/可选当前线程，处理后 `callback-ack`；重复或处理中消息不再执行后续工作。
+
+## 实验性目标模式交接
+
+有明确用户授权时，`run --pause-goal --callback-thread UUID -- CMD ...` 或 `submit WORKFLOW --pause-goal --callback-thread UUID` 在执行交接后通过本机 Codex 实验协议暂停原聊天的 active 目标。目标内容与预算不被覆盖。响应中的 `goal_handoff.status=PAUSED` 是暂停确认；`NOT_ACTIVE` 表示没有可暂停的活动目标，`UNKNOWN` / `UNAVAILABLE` 不证明目标停下。即便暂停失败，已接受的 Job 仍由 Runner 执行，不能因此重交任务。`exec` 不提供该选项。
+
+暂停所有权持久绑定到 Job、event 和原聊天。当前回调认领响应携带 `goal_handoff` 状态；处理完对应任务后、ack 前，执行 `goal-release JOB-ID EVENT-ID --claim-token TOKEN --thread-id UUID`。此命令要求匹配终态任务和当前回调处理凭据；存在同聊天的其他活动任务时返回 `BLOCKED`。保存的目标身份、内容、预算、暂停状态及更新时间仍匹配时才恢复为 active，返回 `RELEASED`。重复释放不再调用目标接口；目标变化返回 `CHANGED`，结果不明返回 `UNKNOWN`，均不盲目重试。传输服务只负责投递，不能在聊天消费回调前自行恢复目标。
+
+遇到结果不明，用户先在 Codex 界面确认目标状态并完成所需恢复；随后明确执行 `goal-dismiss JOB-ID --confirm-manual-recovery` 关闭该终态任务的自动恢复记录。该命令只改 Runner 所有权记录，从不修改 Codex 目标，不能自动用于跳过未确认副作用。
+
+目标模式选项使用实验接口，默认不启用。接口没有原子比较更新或暂停来源字段，快照检查不能排除所有并发用户修改；上述恢复保护不等同于无竞争的自动恢复保证。一次探针授权不代表永久授权以后暂停目标。正式安装版的端到端验收尚待完成。

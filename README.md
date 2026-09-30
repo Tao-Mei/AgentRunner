@@ -6,7 +6,7 @@ AgentRunner hands deterministic, long-running local tasks from an AI coding agen
 
 ## Current status
 
-Version 0.1 is a Windows-first local MVP, intended for developers. It is not yet a one-click desktop application. You start the local service manually; there is no tray icon, system notification, automatic launch, or full graphical task composer.
+Version 0.1 is the validated Windows-first developer baseline. A v0.2 desktop preview is under development, with a Windows installer, on-demand launch, a task window and tray, and workflow scheduling controls. The preview installer has run on a clean Windows VM without Python, including a detached job, notification, upgrade, and uninstall checks. The installed Codex chat handoff and desktop diagnosis flow still need end-to-end acceptance, so v0.2 is not yet a general-use release. The source commands below remain the stable way to try the core.
 
 The current implementation provides:
 
@@ -17,6 +17,16 @@ The current implementation provides:
 - Optional Codex chat callbacks. Duplicate messages may still wake the chat, while the callback skill suppresses duplicate follow-up work.
 
 ## Try it locally
+
+### Windows desktop preview
+
+The development installer is `AgentRunner-Setup-0.2.0-dev.exe`; it is not yet a general-use release. Run the installer for your Windows account, then open **AgentRunner** from the Start menu. Python is bundled. The installer adds the submission and callback Skills to your Codex skills directory; Codex itself and its account setup are separate prerequisites for chat integration.
+
+In a Codex chat, invoke `$agent-runner` and describe a deterministic local task, its working directory, and expected outputs. The Skill uses the installed Runner. The task window displays jobs, steps, logs and artifacts. **Ask Agent** queues a preset or custom question with one snapshot in the originating chat; queue acceptance does not mean that Codex has answered. Closing the window does not cancel a job. **Exit** in the tray refuses to stop while jobs or callbacks still need attention. Upgrade or uninstall only after that work is resolved; uninstall preserves job data and interface settings.
+
+In goal mode, ending a turn alone does not suspend automatic continuation. With explicit user authorization, `run` or `submit` can use `--pause-goal` with `--callback-thread`; only `goal_handoff.status=PAUSED` confirms suspension. The matching callback Skill restores the same goal after handling the result. This uses an experimental local Codex protocol without atomic compare-and-set: changed or uncertain goal state needs human review and must not be blindly restored. The installed pause/completion/callback/restore path has been verified on the development computer; acceptance in another project chat and desktop questions remains pending.
+
+### Python core
 
 Requirements: Windows and Python 3.11 or newer. From the repository root, install the package:
 

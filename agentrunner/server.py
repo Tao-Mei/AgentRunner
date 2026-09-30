@@ -10,7 +10,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
 
-from . import callback, store
+from . import callback, log_text, store
 
 
 def access_token() -> str:
@@ -31,7 +31,7 @@ def access_token() -> str:
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "AgentRunner/0.1"
+    server_version = "AgentRunner/0.2-dev"
 
     def log_message(self, format: str, *args: object) -> None:
         return
@@ -91,13 +91,7 @@ class Handler(BaseHTTPRequestHandler):
                     self.respond(400, {"error": "Invalid stream"})
                     return
                 path = store.job_dir(job_id) / f"{stream}.log"
-                if path.exists():
-                    with path.open("rb") as source:
-                        source.seek(0, 2)
-                        source.seek(max(0, source.tell() - 65536))
-                        content = source.read().decode("utf-8", errors="replace")
-                else:
-                    content = ""
+                content = log_text.read_tail(path, 65536)
                 self.respond(200, {"stream": stream, "tail": content})
                 return
             if len(parts) == 6 and parts[3] == "steps" and parts[5] == "logs":
@@ -110,13 +104,7 @@ class Handler(BaseHTTPRequestHandler):
                     self.respond(400, {"error": "Invalid stream"})
                     return
                 path = store.job_dir(job_id) / "steps" / step_id / f"{stream}.log"
-                if path.exists():
-                    with path.open("rb") as source:
-                        source.seek(0, 2)
-                        source.seek(max(0, source.tell() - 65536))
-                        content = source.read().decode("utf-8", errors="replace")
-                else:
-                    content = ""
+                content = log_text.read_tail(path, 65536)
                 self.respond(200, {"stream": stream, "tail": content})
                 return
         self.respond(404, {"error": "Not found"})
@@ -125,6 +113,19 @@ class Handler(BaseHTTPRequestHandler):
         if not self.authorized():
             return
         parsed = urlsplit(self.path)
+        if parsed.path == "/api/service/shutdown":
+            jobs = store.list_jobs()
+            active = [job["id"] for job in jobs
+                      if job["status"] in {"CREATED", "RUNNING", "FINALIZING", "RESUMING", "UNKNOWN"}]
+            pending = [job["id"] for job in jobs
+                       if (store.get_job(job["id"]) or {}).get("callback_status") in {"PENDING", "SENDING", "UNKNOWN"}]
+            if active or pending:
+                self.respond(409, {"error": "Service still owns active or unresolved work",
+                                   "active_jobs": active, "pending_callbacks": pending})
+                return
+            self.respond(200, {"status": "STOPPING"})
+            threading.Thread(target=self.server.shutdown, daemon=True).start()
+            return
         if parsed.path == "/api/jobs":
             length = int(self.headers.get("Content-Length", "0"))
             if length < 1 or length > 65536:

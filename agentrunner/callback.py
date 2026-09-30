@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import subprocess
 
-from . import store
+from . import codex_command, store
 
 
 QUEUE_ID = re.compile(r"Queued message ([0-9a-f-]+) for thread")
@@ -31,7 +31,7 @@ def deliver(job_id: str, force: bool = False) -> str:
     )
     try:
         result = subprocess.run(
-            ["codex", "queue", "--thread", job["callback_thread"], "--message", message],
+            [codex_command.resolve(), "queue", "--thread", job["callback_thread"], "--message", message],
             capture_output=True, text=True, timeout=20, check=False,
         )
         output = result.stdout + result.stderr
