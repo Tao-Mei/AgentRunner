@@ -6,7 +6,7 @@ AgentRunner 让 AI Coding Agent 把已经规划好的、耗时的本地机器任
 
 ## 当前状态
 
-v0.1 是已验收的 Windows 本地开发者版。v0.2 桌面预览版正在开发，已加入 Windows 安装包、按需启动、任务窗口和托盘、工作流调度控制。预览安装包已在无 Python 的干净 Windows 虚拟机完成独立任务、通知、升级和卸载检查；安装版的 Codex 聊天交接及界面诊断仍需端到端验收，因此还不是正式可供试用的版本。以下源码命令仍是已验证的内核试用路径。
+v0.1 是已验收的 Windows 本地开发者版。现在提供 v0.2 Windows 桌面预览版安装包，包含任务窗口、托盘、历史管理及 Codex 配套 Skill。该版本供早期试用，尚非稳定版；跨项目聊天及界面提问仍需进一步实测。
 
 当前已实现：
 
@@ -20,7 +20,14 @@ v0.1 是已验收的 Windows 本地开发者版。v0.2 桌面预览版正在开�
 
 ### Windows 桌面预览版
 
-开发安装包名为 `AgentRunner-Setup-0.2.0-dev.exe`，目前尚非正式发布版。为当前 Windows 用户运行安装器后，可从开始菜单打开 **AgentRunner**，无需自行安装 Python。安装器会将提交与回调 Skill 放入 Codex 的技能目录；聊天集成仍要求本机具备 Codex 并完成其账号配置。
+[下载 Windows 安装包](https://github.com/Tao-Mei/AgentRunner/releases/download/v0.2.0-preview.1/AgentRunner-Setup-0.2.0-dev.exe) · [版本说明与 SHA256 校验文件](https://github.com/Tao-Mei/AgentRunner/releases/tag/v0.2.0-preview.1)
+
+1. 下载 `AgentRunner-Setup-0.2.0-dev.exe` 并双击运行；请选择安装包，不是 GitHub 的源码 ZIP。
+2. 按向导选择安装位置及是否创建桌面快捷方式，完成后从开始菜单或快捷方式打开 AgentRunner。
+3. 在窗口中点击“使用帮助”查看操作说明。安装包自带 Python，并自动安装 Codex 配套 Skill。
+4. 如需聊天交接和回调，用户自行安装、配置 Codex，并按 Codex 的要求完成认证；随后在聊天中调用 `$agent-runner`。如果当前聊天未识别新 Skill，重新打开 Codex 后新建聊天再试。
+
+AgentRunner 不管理 Codex 账号，也不读取或保存 Codex 登录凭据。它调用本机 Codex 程序完成聊天集成，认证由 Codex 自己处理。没有 Codex 时仍可打开界面及使用本地 Runner 命令，但不能使用 Codex 聊天交接与回调。该包为 Windows x64 预览版；macOS/Linux 不提供安装包。
 
 向导允许选择专用空安装目录、是否创建桌面快捷方式，以及安装后启动程序。升级沿用登记目录；迁移已有安装时先卸载，再选新目录安装。Skill 通过安装登记找到程序。窗口“使用帮助”解释按钮、托盘、提问及历史管理。拖动表头可调整列顺序，点击表头切换排序，显示偏好会保存。任务支持默认空白的备注及保留锁。“一键清理”移除未锁定且已完成、失败或取消的任务和 Runner 日志，但跳过回调或目标恢复尚未结束的任务；实际工作产物和回调去重记录保留。清理后的日志和备注无法在窗口恢复。
 

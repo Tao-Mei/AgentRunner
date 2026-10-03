@@ -6,7 +6,7 @@ AgentRunner hands deterministic, long-running local tasks from an AI coding agen
 
 ## Current status
 
-Version 0.1 is the validated Windows-first developer baseline. A v0.2 desktop preview is under development, with a Windows installer, on-demand launch, a task window and tray, and workflow scheduling controls. The preview installer has run on a clean Windows VM without Python, including a detached job, notification, upgrade, and uninstall checks. The installed Codex chat handoff and desktop diagnosis flow still need end-to-end acceptance, so v0.2 is not yet a general-use release. The source commands below remain the stable way to try the core.
+Version 0.1 is the validated Windows-first developer baseline. A v0.2 Windows desktop preview installer is now available, including a task window, tray, history controls, and Codex Skills. This is an early preview, not a stable release; cross-project chat and desktop-question acceptance remains pending.
 
 The current implementation provides:
 
@@ -20,7 +20,14 @@ The current implementation provides:
 
 ### Windows desktop preview
 
-The development installer is `AgentRunner-Setup-0.2.0-dev.exe`; it is not yet a general-use release. Run the installer for your Windows account, then open **AgentRunner** from the Start menu. Python is bundled. The installer adds the submission and callback Skills to your Codex skills directory; Codex itself and its account setup are separate prerequisites for chat integration.
+[Download the Windows installer](https://github.com/Tao-Mei/AgentRunner/releases/download/v0.2.0-preview.1/AgentRunner-Setup-0.2.0-dev.exe) · [Release notes and SHA256 checksums](https://github.com/Tao-Mei/AgentRunner/releases/tag/v0.2.0-preview.1)
+
+1. Download and run `AgentRunner-Setup-0.2.0-dev.exe`; choose the installer, not GitHub's source ZIP.
+2. Choose an installation folder and optional desktop shortcut, then open AgentRunner from the Start menu or shortcut.
+3. Select **Help** for usage instructions. Python and the companion Codex Skills are included.
+4. For chat handoff and callbacks, install and configure Codex yourself and authenticate as required by Codex, then invoke `$agent-runner` in a chat. If the new Skills are not recognized, reopen Codex and try a new chat.
+
+AgentRunner does not manage Codex accounts or read or store Codex login credentials. It invokes the local Codex program for chat integration; Codex handles authentication. Without Codex, the task window and local Runner commands remain available, but Codex chat handoff and callbacks do not. This is a Windows x64 preview; no macOS/Linux installer is provided.
 
 The wizard lets you choose an empty installation folder, opt into a desktop shortcut, and launch the app on completion. Upgrades reuse the registered folder; to move an existing installation, uninstall first and reinstall in the new folder. Skills discover the registered installation location. The **Help** button explains controls, tray behavior, questions and history. Drag job headers to reorder columns or click them to sort; preferences are saved. Jobs support an optional note and a history lock. **Clean history** removes unlocked finished jobs and Runner logs only after callbacks and goal recovery are resolved, retaining work artifacts and callback deduplication records. Completed, failed and cancelled jobs are included. Cleanup cannot recover removed logs or notes.
 
