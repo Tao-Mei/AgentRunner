@@ -24,15 +24,16 @@ try {
     # example Poppler's incompatible ICU) out of the Qt bundle.
     $env:PATH = @((Split-Path -Parent $pythonExe), "$env:WINDIR\System32", $env:WINDIR) -join ';'
     & $pythonExe -m PyInstaller --noconfirm --clean --onedir --console `
-        --name runner --paths $projectRoot --exclude-module PySide6 `
+        --name runner --paths $projectRoot --exclude-module PySide6 --icon "$projectRoot\agentrunner\assets\agentrunner.ico" `
         --add-data "$projectRoot\agentrunner\ui.html;agentrunner" `
         --distpath $distRoot --workpath (Join-Path $buildRoot 'runner') `
         --specpath $buildRoot (Join-Path $PSScriptRoot 'runner_exe.py')
     if ($LASTEXITCODE -ne 0) { throw "Console build failed: $LASTEXITCODE" }
 
     & $pythonExe -m PyInstaller --noconfirm --clean --onedir --windowed `
-        --name AgentRunner --paths $projectRoot `
+        --name AgentRunner --paths $projectRoot --icon "$projectRoot\agentrunner\assets\agentrunner.ico" `
         --add-data "$projectRoot\agentrunner\ui.html;agentrunner" `
+        --add-data "$projectRoot\agentrunner\assets;agentrunner/assets" `
         --distpath $desktopDistRoot --workpath (Join-Path $buildRoot 'desktop') `
         --specpath $buildRoot (Join-Path $PSScriptRoot 'desktop_exe.py')
     if ($LASTEXITCODE -ne 0) { throw "Desktop build failed: $LASTEXITCODE" }

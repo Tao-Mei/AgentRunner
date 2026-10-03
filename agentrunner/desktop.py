@@ -10,15 +10,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from PySide6.QtCore import QLocale, QSettings, QThread, QTimer, QUrl, Qt, Signal
-from PySide6.QtGui import QDesktopServices, QFont
+from PySide6.QtGui import QDesktopServices, QFont, QIcon, QColor, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QFormLayout, QHBoxLayout, QLabel,
     QLineEdit, QMainWindow, QMenu, QMessageBox, QPlainTextEdit, QProgressBar,
-    QPushButton, QSplitter, QStyle, QTabWidget, QTableWidget, QTableWidgetItem,
-    QSystemTrayIcon, QVBoxLayout, QWidget,
+    QPushButton, QSplitter, QTabWidget, QTableWidget, QTableWidgetItem,
+    QStyledItemDelegate, QSystemTrayIcon, QVBoxLayout, QWidget,
 )
 
-from . import codex_command, log_text, store
+from . import codex_command, history, log_text, store
+from .help_text import HELP
 
 
 def startup_trace(stage: str) -> None:
@@ -97,6 +98,90 @@ STATUS_LABELS = {
            "UNKNOWN": "待核对", "RESUMING": "恢复中", "PENDING": "待执行",
            "TIMED_OUT": "超时", "SKIPPED": "已跳过"},
 }
+
+WORDS['en'].update({
+    'help': 'Help', 'clean': 'Clean history', 'locked': 'Locked', 'note': 'Note',
+    'lock': 'Lock / unlock', 'locked_tip': 'Locked — click to unlock', 'unlocked_tip': 'Unlocked — click to lock',
+    'clean_confirm': 'Remove all unlocked finished jobs and their Runner logs? Completed, failed and cancelled jobs qualify only after callbacks and goal recovery are resolved. Work files and callback deduplication records are kept.',
+    'clean_result': 'Removed {count} jobs. Locked or unresolved jobs were kept.',
+    'clean_error': 'Some log folders could not be removed; retry cleanup later:\n{errors}',
+    'metadata_error': 'This job is no longer available.',
+    'note_save_failed': 'Some notes could not be saved. Copy the text or resolve the error before closing or cleaning history.',
+})
+WORDS['zh'].update({
+    'help': '使用帮助', 'clean': '一键清理', 'locked': '锁定', 'note': '备注',
+    'lock': '锁定/解锁', 'locked_tip': '已锁定，点击解锁', 'unlocked_tip': '未锁定，点击锁定',
+    'clean_confirm': '清理所有未锁定且已结束的任务及其 Runner 日志吗？包括已完成、失败和取消的任务，但会跳过回调或目标恢复未处理完的任务。实际工作产物和回调去重记录保留。',
+    'clean_result': '已清理 {count} 条任务；锁定或尚未处理完的任务已保留。',
+    'clean_error': '部分日志目录未能删除，可稍后再次清理：\n{errors}',
+    'metadata_error': '此任务已不在列表中。',
+    'note_save_failed': '部分备注未能保存。请先复制内容或处理保存错误，再关闭或清理历史。',
+})
+
+
+def application_icon() -> QIcon:
+    return QIcon(str(Path(__file__).with_name('assets') / 'agentrunner.ico'))
+
+
+def lock_icon(locked: bool) -> QIcon:
+    pixmap = QPixmap(24, 24)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(QPen(QColor('#1766d5' if locked else '#68778c'), 1.8))
+    shackle = QPainterPath()
+    if locked:
+        shackle.moveTo(7, 10)
+        shackle.lineTo(7, 7)
+        shackle.cubicTo(7, 1, 17, 1, 17, 7)
+        shackle.lineTo(17, 10)
+    else:
+        shackle.moveTo(11, 10)
+        shackle.lineTo(11, 6)
+        shackle.cubicTo(11, 1, 21, 1, 21, 6)
+    painter.drawPath(shackle)
+    painter.setBrush(QColor('#e8f0fb' if locked else '#f4f7fb'))
+    painter.drawRoundedRect(4, 10, 15, 11, 2, 2)
+    painter.drawEllipse(10, 14, 3, 3)
+    painter.drawLine(11, 17, 11, 19)
+    painter.end()
+    return QIcon(pixmap)
+
+
+class NoteDelegate(QStyledItemDelegate):
+    opened = Signal(object)
+    changed = Signal(str, str)
+    closed = Signal()
+
+    def createEditor(self, parent, option, index):
+        editor = QPlainTextEdit(parent)
+        editor.setProperty('job_id', index.data(Qt.ItemDataRole.UserRole))
+        editor.textChanged.connect(lambda: self.changed.emit(editor.property('job_id'), editor.toPlainText()))
+        editor.destroyed.connect(lambda: self.closed.emit())
+        self.opened.emit(editor)
+        return editor
+
+    def setEditorData(self, editor, index):
+        editor.blockSignals(True)
+        editor.setPlainText(index.data(Qt.ItemDataRole.EditRole) or '')
+        editor.blockSignals(False)
+
+    def setModelData(self, editor, model, index):
+        # The captured ID survives sorting or selection changes during editing.
+        self.changed.emit(editor.property('job_id'), editor.toPlainText())
+        model.setData(index, editor.toPlainText(), Qt.ItemDataRole.EditRole)
+
+
+class JobItem(QTableWidgetItem):
+    def __init__(self, text: str, job_id: str, sort_value) -> None:
+        super().__init__(text)
+        self.setData(Qt.ItemDataRole.UserRole, job_id)
+        self.sort_value = sort_value
+
+    def __lt__(self, other) -> bool:
+        if isinstance(other, JobItem):
+            return self.sort_value < other.sort_value
+        return super().__lt__(other)
 
 
 def log_tail(job_id: str, stream: str, step_id: str | None = None, limit: int = 32_768) -> str:
@@ -178,8 +263,16 @@ class RunnerWindow(QMainWindow):
         self.ask_worker: AskWorker | None = None
         self._close_when_ask_done = False
         self._allow_close = False
+        self._pending_notes: dict[str, str] = {}
+        self._note_job_id: str | None = None
+        self._table_editor = None
+        self.note_timer = QTimer(self)
+        self.note_timer.setSingleShot(True)
+        self.note_timer.setInterval(400)
+        self.note_timer.timeout.connect(self._flush_notes)
+        self._lock_icons = {locked: lock_icon(locked) for locked in (False, True)}
         self.setWindowTitle("AgentRunner")
-        self.setWindowIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon))
+        self.setWindowIcon(application_icon())
         self.setStyleSheet("""
             QMainWindow, QWidget { background: #f4f7fb; color: #172338; }
             QTableWidget, QPlainTextEdit, QLineEdit, QComboBox, QTabWidget::pane {
@@ -226,21 +319,55 @@ class RunnerWindow(QMainWindow):
         self.close_checkbox.toggled.connect(lambda value: self.settings.setValue("close_to_tray", value))
         self.refresh_button = QPushButton()
         self.refresh_button.clicked.connect(self.refresh)
+        self.help_button = QPushButton()
+        self.help_button.clicked.connect(lambda: QMessageBox.information(self, self.tr('help'), HELP[self.language]))
         top.addWidget(self.language_label)
         top.addWidget(self.language_combo)
         top.addSpacing(20)
         top.addWidget(self.close_checkbox)
         top.addStretch()
+        top.addWidget(self.help_button)
         top.addWidget(self.refresh_button)
         layout.addLayout(top)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
-        self.jobs_table = QTableWidget(0, 3)
+        left = QWidget()
+        left_layout = QVBoxLayout(left)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        self.jobs_table = QTableWidget(0, 5)
         self.jobs_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self.jobs_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.jobs_table.setEditTriggers(QTableWidget.EditTrigger.DoubleClicked | QTableWidget.EditTrigger.EditKeyPressed | QTableWidget.EditTrigger.AnyKeyPressed)
         self.jobs_table.itemSelectionChanged.connect(self._job_selected)
-        self.jobs_table.horizontalHeader().setStretchLastSection(True)
-        splitter.addWidget(self.jobs_table)
+        self.jobs_table.cellClicked.connect(self._lock_clicked)
+        self.note_delegate = NoteDelegate(self.jobs_table)
+        self.note_delegate.opened.connect(self._note_editor_opened)
+        self.note_delegate.changed.connect(self._queue_note)
+        self.note_delegate.closed.connect(self._note_editor_closed)
+        self.jobs_table.setItemDelegateForColumn(4, self.note_delegate)
+        header = self.jobs_table.horizontalHeader()
+        header.setSectionsMovable(True)
+        header.setStretchLastSection(True)
+        self.jobs_table.setSortingEnabled(True)
+        self.jobs_table.sortItems(2, Qt.SortOrder.DescendingOrder)
+        saved_header = self.settings.value('jobs_header_v2')
+        if saved_header is not None:
+            header.restoreState(saved_header)
+        else:
+            old_header = self.settings.value('jobs_header_v1')
+            if old_header is not None:
+                header.restoreState(old_header)
+            header.moveSection(header.visualIndex(3), 0)
+            for column, width in enumerate((130, 78, 120, 36, 110)):
+                self.jobs_table.setColumnWidth(column, width)
+        header.sectionMoved.connect(self._save_columns)
+        header.sortIndicatorChanged.connect(self._save_columns)
+        left_layout.addWidget(self.jobs_table)
+        history_actions = QHBoxLayout()
+        self.clean_button = QPushButton()
+        self.clean_button.clicked.connect(self._clean_history)
+        history_actions.addWidget(self.clean_button)
+        left_layout.addLayout(history_actions)
+        splitter.addWidget(left)
 
         right = QWidget()
         right_layout = QVBoxLayout(right)
@@ -252,6 +379,10 @@ class RunnerWindow(QMainWindow):
         self.progress = QProgressBar()
         right_layout.addWidget(self.title_label)
         right_layout.addWidget(self.status_label)
+        self.note_input = QPlainTextEdit()
+        self.note_input.setMaximumHeight(64)
+        self.note_input.textChanged.connect(self._detail_note_changed)
+        right_layout.addWidget(self.note_input)
         right_layout.addWidget(self.error_label)
         right_layout.addWidget(self.progress)
         actions = QHBoxLayout()
@@ -300,7 +431,7 @@ class RunnerWindow(QMainWindow):
         self.ask_info_label.setWordWrap(True)
         right_layout.addWidget(self.ask_info_label)
         splitter.addWidget(right)
-        splitter.setSizes([350, 770])
+        splitter.setSizes([520, 600])
         layout.addWidget(splitter)
         self.setCentralWidget(root)
 
@@ -308,7 +439,12 @@ class RunnerWindow(QMainWindow):
         self.language_label.setText(self.tr("language"))
         self.close_checkbox.setText(self.tr("close_to_tray"))
         self.refresh_button.setText(self.tr("refresh"))
-        self.jobs_table.setHorizontalHeaderLabels([self.tr("name"), self.tr("status"), self.tr("created")])
+        self.help_button.setText(self.tr('help'))
+        self.clean_button.setText(self.tr('clean'))
+        self.jobs_table.setHorizontalHeaderLabels([self.tr(key) for key in ('name', 'status', 'created', 'locked', 'note')])
+        self.jobs_table.horizontalHeaderItem(3).setText('L')
+        self.jobs_table.horizontalHeaderItem(3).setToolTip(self.tr('lock'))
+        self.note_input.setPlaceholderText(self.tr('note'))
         self.steps_table.setHorizontalHeaderLabels([self.tr("step"), self.tr("status"), self.tr("attempts")])
         for index, key in enumerate(("steps", "output", "events", "artifacts")):
             self.tabs.setTabText(index, self.tr(key))
@@ -333,6 +469,63 @@ class RunnerWindow(QMainWindow):
         self.settings.setValue("language", self.language)
         self._translate()
         self.refresh()
+
+    def _save_columns(self, *args) -> None:
+        self.settings.setValue('jobs_header_v2', self.jobs_table.horizontalHeader().saveState())
+
+    def _lock_clicked(self, row: int, column: int) -> None:
+        if column != 3:
+            return
+        job = store.get_job(self.jobs_table.item(row, column).data(Qt.ItemDataRole.UserRole))
+        if job and not history.update(job['id'], locked=not bool(job['user_locked'])):
+            self.statusBar().showMessage(self.tr('metadata_error'))
+        self.refresh()
+
+    def _note_editor_opened(self, editor) -> None:
+        self._table_editor = editor
+
+    def _note_editor_closed(self) -> None:
+        self._table_editor = None
+        self._flush_notes()
+        QTimer.singleShot(0, self.refresh)
+
+    def _queue_note(self, job_id: str, note: str) -> None:
+        self._pending_notes[job_id] = note
+        self.note_timer.start()
+
+    def _detail_note_changed(self) -> None:
+        if self._note_job_id:
+            self._queue_note(self._note_job_id, self.note_input.toPlainText())
+
+    def _flush_notes(self) -> None:
+        self.note_timer.stop()
+        for job_id, note in list(self._pending_notes.items()):
+            try:
+                if history.update(job_id, note=note):
+                    del self._pending_notes[job_id]
+                else:
+                    self.statusBar().showMessage(self.tr('metadata_error'))
+            except Exception as exc:
+                self.statusBar().showMessage(str(exc))
+
+    def _clean_history(self) -> None:
+        self._flush_notes()
+        if self._pending_notes:
+            QMessageBox.warning(self, self.tr('note'), self.tr('note_save_failed'))
+            return
+        if self.ask_worker is not None:
+            QMessageBox.information(self, self.tr('clean'), self.tr('ask_busy'))
+            return
+        if QMessageBox.question(self, self.tr('clean'), self.tr('clean_confirm')) != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            result = history.clean()
+            self.refresh()
+            self.statusBar().showMessage(self.tr('clean_result').format(count=len(result['removed'])))
+            if result['errors']:
+                QMessageBox.warning(self, self.tr('clean'), self.tr('clean_error').format(errors='\n'.join(result['errors'])))
+        except Exception as exc:
+            QMessageBox.warning(self, self.tr('clean'), str(exc))
 
     def _make_tray(self) -> None:
         self.tray = QSystemTrayIcon(self.windowIcon(), self)
@@ -367,6 +560,10 @@ class RunnerWindow(QMainWindow):
             self.statusBar().showMessage(f"{type(exc).__name__}: {exc}")
 
     def exit_window(self) -> None:
+        self._flush_notes()
+        if self._pending_notes:
+            QMessageBox.warning(self, self.tr('note'), self.tr('note_save_failed'))
+            return
         if self.ask_worker is not None:
             QMessageBox.information(self, self.tr("exit"), self.tr("ask_busy"))
             return
@@ -392,6 +589,11 @@ class RunnerWindow(QMainWindow):
         QApplication.instance().quit()
 
     def closeEvent(self, event: object) -> None:  # Qt callback
+        self._flush_notes()
+        if self._pending_notes:
+            QMessageBox.warning(self, self.tr('note'), self.tr('note_save_failed'))
+            event.ignore()
+            return
         hide_to_tray = not self._allow_close and self.close_checkbox.isChecked() and self.tray.isVisible()
         if self.ask_worker is not None and not hide_to_tray:
             self._close_when_ask_done = True
@@ -410,6 +612,8 @@ class RunnerWindow(QMainWindow):
     def refresh(self) -> None:
         try:
             jobs = store.list_jobs()
+            if self.selected_id not in {job['id'] for job in jobs}:
+                self.selected_id = None
             if jobs and self.selected_id is None:
                 self.selected_id = jobs[0]["id"]
             latest = {job["id"]: (job["status"], job["callback_status"]) for job in jobs}
@@ -425,19 +629,52 @@ class RunnerWindow(QMainWindow):
                     ):
                         self._notify(job, attention=status == "UNKNOWN")
             self.previous_statuses = latest
+            if self._table_editor is not None:
+                # Rebuilding a table destroys its live editor and unsaved text.
+                if self.selected_id:
+                    self._show_detail()
+                return
             self.jobs_table.blockSignals(True)
+            self.jobs_table.setSortingEnabled(False)
             self.jobs_table.setRowCount(len(jobs))
             for row, job in enumerate(jobs):
-                for col, value in enumerate((job.get("name") or job["id"], self.status_text(job["status"]), job["created_at"])):
-                    item = QTableWidgetItem(str(value))
-                    item.setData(Qt.ItemDataRole.UserRole, job["id"])
+                values = (job.get('name') or job['id'], self.status_text(job['status']),
+                          job['created_at'], '', self._pending_notes.get(job['id'], job['note']))
+                sort_values = (values[0].casefold(), values[1], datetime.fromisoformat(job['created_at']).timestamp(),
+                               job['user_locked'], values[4].casefold())
+                for col, value in enumerate(values):
+                    item = JobItem(str(value), job['id'], sort_values[col])
+                    if col != 4:
+                        item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                    if col == 3:
+                        item.setIcon(self._lock_icons[bool(job['user_locked'])])
+                        item.setToolTip(self.tr('locked_tip' if job['user_locked'] else 'unlocked_tip'))
+                    if col == 4:
+                        item.setToolTip(str(value))
                     self.jobs_table.setItem(row, col, item)
-                if job["id"] == self.selected_id:
+            self.jobs_table.setSortingEnabled(True)
+            for row in range(self.jobs_table.rowCount()):
+                if self.jobs_table.item(row, 0).data(Qt.ItemDataRole.UserRole) == self.selected_id:
                     self.jobs_table.selectRow(row)
             self.jobs_table.blockSignals(False)
             if self.selected_id:
                 self._show_detail()
             elif not jobs:
+                self.title_label.setText(self.tr('select'))
+                self.status_label.clear()
+                self.error_label.clear()
+                self._note_job_id = None
+                self.note_input.blockSignals(True)
+                self.note_input.clear()
+                self.note_input.blockSignals(False)
+                self.note_input.setEnabled(False)
+                self.steps_table.setRowCount(0)
+                for text in (self.output_text, self.events_text, self.artifacts_text, self.ask_info_label):
+                    text.clear()
+                self.progress.setRange(0, 1)
+                self.progress.setValue(0)
+                for button in (self.cancel_button, self.pause_button, self.continue_button, self.stop_button, self.folder_button, self.ask_button):
+                    button.setEnabled(False)
                 self.statusBar().showMessage(self.tr("no_data"))
         except Exception as exc:
             self.statusBar().showMessage(f"{type(exc).__name__}: {exc}")
@@ -450,6 +687,7 @@ class RunnerWindow(QMainWindow):
         self.tray.showMessage(self.tr(key), job["id"], icon, 8000)
 
     def _job_selected(self) -> None:
+        self._flush_notes()
         rows = self.jobs_table.selectionModel().selectedRows()
         if rows:
             item = self.jobs_table.item(rows[0].row(), 0)
@@ -465,6 +703,13 @@ class RunnerWindow(QMainWindow):
         steps = store.list_steps(self.selected_id) if job["kind"] == "workflow" else []
         events = store.list_events(self.selected_id)
         self.title_label.setText(job.get("name") or self.selected_id)
+        note = self._pending_notes.get(job['id'], job['note'])
+        if self._note_job_id != job['id'] or (not self.note_input.hasFocus() and self.note_input.toPlainText() != note):
+            self.note_input.blockSignals(True)
+            self.note_input.setPlainText(note)
+            self.note_input.blockSignals(False)
+        self._note_job_id = job['id']
+        self.note_input.setEnabled(True)
         control_state = (self.tr("stopping") if job["stop_after_current_requested"] else
                          self.tr("paused") if job["pause_requested"] else "")
         if job["callback_status"] == "UNKNOWN":
@@ -574,7 +819,10 @@ def main(arguments: list[str] | None = None) -> int:
     startup_trace("after QApplication")
     app.setQuitOnLastWindowClosed(False)
     if sys.platform == "win32":
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('TaoMei.AgentRunner')
         app.setFont(QFont("Microsoft YaHei UI", 10))
+    app.setWindowIcon(application_icon())
     from .launcher import ensure_service
 
     service_error = ""

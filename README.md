@@ -22,6 +22,8 @@ The current implementation provides:
 
 The development installer is `AgentRunner-Setup-0.2.0-dev.exe`; it is not yet a general-use release. Run the installer for your Windows account, then open **AgentRunner** from the Start menu. Python is bundled. The installer adds the submission and callback Skills to your Codex skills directory; Codex itself and its account setup are separate prerequisites for chat integration.
 
+The wizard lets you choose an empty installation folder, opt into a desktop shortcut, and launch the app on completion. Upgrades reuse the registered folder; to move an existing installation, uninstall first and reinstall in the new folder. Skills discover the registered installation location. The **Help** button explains controls, tray behavior, questions and history. Drag job headers to reorder columns or click them to sort; preferences are saved. Jobs support an optional note and a history lock. **Clean history** removes unlocked finished jobs and Runner logs only after callbacks and goal recovery are resolved, retaining work artifacts and callback deduplication records. Completed, failed and cancelled jobs are included. Cleanup cannot recover removed logs or notes.
+
 In a Codex chat, invoke `$agent-runner` and describe a deterministic local task, its working directory, and expected outputs. The Skill uses the installed Runner. The task window displays jobs, steps, logs and artifacts. **Ask Agent** queues a preset or custom question with one snapshot in the originating chat; queue acceptance does not mean that Codex has answered. Closing the window does not cancel a job. **Exit** in the tray refuses to stop while jobs or callbacks still need attention. Upgrade or uninstall only after that work is resolved; uninstall preserves job data and interface settings.
 
 In goal mode, ending a turn alone does not suspend automatic continuation. With explicit user authorization, `run` or `submit` can use `--pause-goal` with `--callback-thread`; only `goal_handoff.status=PAUSED` confirms suspension. The matching callback Skill restores the same goal after handling the result. This uses an experimental local Codex protocol without atomic compare-and-set: changed or uncertain goal state needs human review and must not be blindly restored. The installed pause/completion/callback/restore path has been verified on the development computer; acceptance in another project chat and desktop questions remains pending.
@@ -50,6 +52,8 @@ python -m agentrunner logs JOB-ID --stream stdout
 For the local browser page, run `python -m agentrunner serve` in one terminal. In another terminal, run `python -m agentrunner ui` and open the printed local URL. The page is available only while the service is running; closing the page does not stop an accepted job.
 
 To submit a prepared local workflow, use `python -m agentrunner submit workflow.yaml`. Run `python -m agentrunner --help` for all commands. Job data is stored in `.agentrunner` under your user directory by default. Set `AGENTRUNNER_HOME` when you need an isolated data directory; the CLI, service, and workers must use the same one.
+
+Notes can be edited directly by double-clicking a Note cell or typing in the details note field; both save automatically to the same job. The compact `L` column uses clickable open/closed lock icons. Hover over its header for the lock/unlock hint.
 
 ## Codex integration and limits
 

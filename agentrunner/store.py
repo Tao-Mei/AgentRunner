@@ -159,6 +159,9 @@ def connect() -> sqlite3.Connection:
         ("watch_json", "TEXT NOT NULL DEFAULT '[]'"),
         ("resume_claimed_at", "TEXT"),
         ("resume_count", "INTEGER NOT NULL DEFAULT 0"),
+        ("user_locked", "INTEGER NOT NULL DEFAULT 0"),
+        ("note", "TEXT NOT NULL DEFAULT ''"),
+        ("archived", "INTEGER NOT NULL DEFAULT 0"),
     ):
         if name not in columns:
             con.execute(f"ALTER TABLE jobs ADD COLUMN {name} {declaration}")
@@ -244,8 +247,8 @@ def get_job(job_id: str) -> dict[str, Any] | None:
 def list_jobs() -> list[dict[str, Any]]:
     with connect() as con:
         rows = con.execute(
-            "SELECT id, kind, name, status, callback_status, created_at, started_at, finished_at, exit_code "
-            "FROM jobs ORDER BY created_at DESC"
+            "SELECT id, kind, name, status, callback_status, created_at, started_at, finished_at, exit_code, user_locked, note "
+            "FROM jobs WHERE archived = 0 ORDER BY created_at DESC"
         ).fetchall()
     return [dict(row) for row in rows]
 

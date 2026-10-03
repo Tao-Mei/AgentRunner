@@ -21,4 +21,4 @@ runner = "agentrunner.cli:main"
 include = ["agentrunner*"]
 
 [tool.setuptools.package-data]
-agentrunner = ["ui.html", "README.md", "structure.md", "contract.md"]
+agentrunner = ["ui.html", "README.md", "structure.md", "contract.md", "assets/*.png", "assets/*.ico"]

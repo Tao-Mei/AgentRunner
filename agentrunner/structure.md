@@ -15,6 +15,7 @@
 | 进程身份、取消、失联核对 | [processes.py](processes.py) | [cli.py](cli.py)、[worker.py](worker.py) |
 | 本地 Service、令牌 API、任务页面 | [server.py](server.py) | [ui.html](ui.html)、[store.py](store.py) |
 | Windows 桌面任务窗口、托盘、诊断提问 | [desktop.py](desktop.py) | [store.py](store.py)、[callback.py](callback.py) |
+| 历史清理、任务锁定、备注与使用帮助 | [history.py](history.py) | [desktop.py](desktop.py)、[help_text.py](help_text.py) |
 | Workflow YAML 预检、依赖展开 | [workflow.py](workflow.py) | [workflow_worker.py](workflow_worker.py) |
 | Workflow 调度、步骤日志、资源锁与 Finalizer | [workflow_worker.py](workflow_worker.py) | [store.py](store.py)、[workflow.py](workflow.py) |
 | 失联核对、步骤结果决策、检查点恢复 | [cli.py](cli.py) | [store.py](store.py)、[workflow_worker.py](workflow_worker.py) |

@@ -29,6 +29,8 @@ v0.2 的 Workflow 调度控制：`pause-scheduling JOB-ID` 只暂停**新步骤*
 
 ## 实验性目标模式交接
 
+桌面历史管理：`user_locked` 是用户保留锁，与执行资源锁不同；`note` 默认为空。清理只处理未锁定的已知终态任务，且要求回调无须请求或已确认处理、目标交接已解决、没有资源租约。清理后 `archived=1` 的记录不出现在任务列表，详细步骤、事件与 Runner 日志被清理；Job/event/thread 与回调认领记录保留，重复回调仍返回 `duplicate`。实际工作目录与用户产物不删除。日志删除失败会提示并可再次清理；无法确认的任务不自动清理。
+
 有明确用户授权时，`run --pause-goal --callback-thread UUID -- CMD ...` 或 `submit WORKFLOW --pause-goal --callback-thread UUID` 在执行交接后通过本机 Codex 实验协议暂停原聊天的 active 目标。目标内容与预算不被覆盖。响应中的 `goal_handoff.status=PAUSED` 是暂停确认；`NOT_ACTIVE` 表示没有可暂停的活动目标，`UNKNOWN` / `UNAVAILABLE` 不证明目标停下。即便暂停失败，已接受的 Job 仍由 Runner 执行，不能因此重交任务。`exec` 不提供该选项。
 
 暂停所有权持久绑定到 Job、event 和原聊天。当前回调认领响应携带 `goal_handoff` 状态；处理完对应任务后、ack 前，执行 `goal-release JOB-ID EVENT-ID --claim-token TOKEN --thread-id UUID`。此命令要求匹配终态任务和当前回调处理凭据；存在同聊天的其他活动任务时返回 `BLOCKED`。保存的目标身份、内容、预算、暂停状态及更新时间仍匹配时才恢复为 active，返回 `RELEASED`。重复释放不再调用目标接口；目标变化返回 `CHANGED`，结果不明返回 `UNKNOWN`，均不盲目重试。传输服务只负责投递，不能在聊天消费回调前自行恢复目标。

@@ -1,5 +1,6 @@
 Unicode true
 !include "MUI2.nsh"
+!include "nsDialogs.nsh"
 
 !ifndef ROOT
   !error "Pass /DROOT=... to makensis"
@@ -14,18 +15,25 @@ Unicode true
 Name "AgentRunner 0.2 Development Preview"
 OutFile "${OUT}\AgentRunner-Setup-0.2.0-dev.exe"
 InstallDir "$LOCALAPPDATA\Programs\AgentRunner"
+InstallDirRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\AgentRunner" "InstallLocation"
 RequestExecutionLevel user
 SetCompressor /SOLID lzma
 ShowInstDetails show
 ShowUninstDetails show
 
 !define MUI_ABORTWARNING
+!define MUI_ICON "${ROOT}\agentrunner\assets\agentrunner.ico"
+!define MUI_UNICON "${ROOT}\agentrunner\assets\agentrunner.ico"
 !define MUI_LANGDLL_REGISTRY_ROOT "HKCU"
 !define MUI_LANGDLL_REGISTRY_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\AgentRunner"
 !define MUI_LANGDLL_REGISTRY_VALUENAME "InstallerLanguage"
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_LICENSE "${ROOT}\LICENSE"
+!define MUI_PAGE_CUSTOMFUNCTION_LEAVE ValidateDirectory
+!insertmacro MUI_PAGE_DIRECTORY
+Page custom ShortcutPage ShortcutLeave
 !insertmacro MUI_PAGE_INSTFILES
+!define MUI_FINISHPAGE_RUN "$INSTDIR\AgentRunner.exe"
 !insertmacro MUI_PAGE_FINISH
 !insertmacro MUI_UNPAGE_CONFIRM
 !insertmacro MUI_UNPAGE_INSTFILES
@@ -46,9 +54,61 @@ LangString UninstallProcesses ${LANG_ENGLISH} "Close AgentRunner and wait for in
 LangString UninstallProcesses ${LANG_SIMPCHINESE} "请关闭 AgentRunner，并等待安装版相关进程全部退出，再卸载。"
 LangString DataPreserved ${LANG_ENGLISH} "Job data in the user's .agentrunner directory was preserved."
 LangString DataPreserved ${LANG_SIMPCHINESE} "用户 .agentrunner 目录中的任务数据已保留。"
+LangString ShortcutTitle ${LANG_ENGLISH} "Shortcuts"
+LangString ShortcutTitle ${LANG_SIMPCHINESE} "快捷方式"
+LangString ShortcutDescription ${LANG_ENGLISH} "Choose how to find AgentRunner after installation."
+LangString ShortcutDescription ${LANG_SIMPCHINESE} "选择安装后如何找到 AgentRunner。"
+LangString DesktopOption ${LANG_ENGLISH} "Create a desktop shortcut"
+LangString DesktopOption ${LANG_SIMPCHINESE} "创建桌面快捷方式"
+LangString MoveInstall ${LANG_ENGLISH} "To move an existing installation, uninstall it first and then install in the new folder. Job data and settings are preserved."
+LangString MoveInstall ${LANG_SIMPCHINESE} "如需迁移现有安装，请先卸载，再选择新目录安装。任务数据与界面设置会保留。"
+LangString EmptyFolder ${LANG_ENGLISH} "Choose an empty folder dedicated to AgentRunner."
+LangString EmptyFolder ${LANG_SIMPCHINESE} "请选择专用于 AgentRunner 的空文件夹。"
+
+Var ShortcutCheckbox
+Var DesktopShortcut
+Var PreviousInstall
 
 Function .onInit
   !insertmacro MUI_LANGDLL_DISPLAY
+  StrCpy $DesktopShortcut ${BST_CHECKED}
+  ReadRegStr $PreviousInstall HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\AgentRunner" "InstallLocation"
+  StrCmp $PreviousInstall "" 0 CheckPrevious
+  IfFileExists "$LOCALAPPDATA\Programs\AgentRunner\runner.exe" 0 CheckPrevious
+    StrCpy $PreviousInstall "$LOCALAPPDATA\Programs\AgentRunner"
+  CheckPrevious:
+  StrCmp $PreviousInstall "" InitDone
+  IfFileExists "$PreviousInstall\runner.exe" 0 MissingPrevious
+    StrCpy $INSTDIR $PreviousInstall
+    Goto InitDone
+  MissingPrevious:
+    StrCpy $PreviousInstall ""
+  InitDone:
+FunctionEnd
+
+Function ValidateDirectory
+  StrCmp $PreviousInstall "" DirectoryValid
+  StrCmp $INSTDIR $PreviousInstall DirectoryValid
+  MessageBox MB_ICONSTOP "$(MoveInstall)"
+  Abort
+  DirectoryValid:
+FunctionEnd
+
+Function ShortcutPage
+  !insertmacro MUI_HEADER_TEXT "$(ShortcutTitle)" "$(ShortcutDescription)"
+  nsDialogs::Create 1018
+  Pop $0
+  ${If} $0 == error
+    Abort
+  ${EndIf}
+  ${NSD_CreateCheckbox} 0 10u 100% 18u "$(DesktopOption)"
+  Pop $ShortcutCheckbox
+  ${NSD_SetState} $ShortcutCheckbox $DesktopShortcut
+  nsDialogs::Show
+FunctionEnd
+
+Function ShortcutLeave
+  ${NSD_GetState} $ShortcutCheckbox $DesktopShortcut
 FunctionEnd
 
 Function un.onInit
@@ -57,6 +117,7 @@ FunctionEnd
 
 Section "AgentRunner" MainSection
   SetShellVarContext current
+  Call ValidateDirectory
   IfFileExists "$PROFILE\.codex\skills\agent-runner\SKILL.md" 0 CheckCallbackCollision
   IfFileExists "$PROFILE\.codex\skills\agent-runner\.agentrunner-owned" CheckCallbackCollision 0
   MessageBox MB_ICONSTOP "$(SubmitConflict)"
@@ -78,6 +139,10 @@ Section "AgentRunner" MainSection
   File /oname=install-preflight.ps1 "${ROOT}\packaging\install-preflight.ps1"
   ExecWait 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\install-preflight.ps1" -InstallDir "$INSTDIR"' $0
   StrCmp $0 "0" InstallFiles
+  StrCmp $0 "3" 0 InstallProcessesBlocked
+  MessageBox MB_ICONSTOP "$(EmptyFolder)"
+  Abort
+  InstallProcessesBlocked:
   MessageBox MB_ICONSTOP "$(InstallProcesses)"
   Abort
   InstallFiles:
@@ -92,6 +157,14 @@ Section "AgentRunner" MainSection
   CreateDirectory "$SMPROGRAMS\AgentRunner"
   CreateShortCut "$SMPROGRAMS\AgentRunner\AgentRunner.lnk" "$INSTDIR\AgentRunner.exe"
   CreateShortCut "$SMPROGRAMS\AgentRunner\Uninstall AgentRunner.lnk" "$INSTDIR\Uninstall.exe"
+  ${If} $DesktopShortcut == ${BST_CHECKED}
+    CreateShortCut "$DESKTOP\AgentRunner.lnk" "$INSTDIR\AgentRunner.exe"
+  ${Else}
+    ReadRegDWORD $0 HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\AgentRunner" "DesktopShortcut"
+    ${If} $0 == 1
+      Delete "$DESKTOP\AgentRunner.lnk"
+    ${EndIf}
+  ${EndIf}
 
   IfFileExists "$PROFILE\.codex\skills\agent-runner\SKILL.md" 0 SubmitSkill
   IfFileExists "$PROFILE\.codex\skills\agent-runner\.agentrunner-owned" SubmitSkill 0
@@ -121,6 +194,10 @@ Section "AgentRunner" MainSection
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\AgentRunner" "DisplayName" "AgentRunner"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\AgentRunner" "DisplayVersion" "0.2.0-dev"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\AgentRunner" "Publisher" "Tao Mei"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\AgentRunner" "InstallLocation" "$INSTDIR"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\AgentRunner" "InstallerLanguage" "$LANGUAGE"
+  WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\AgentRunner" "DesktopShortcut" $DesktopShortcut
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\AgentRunner" "DisplayIcon" "$INSTDIR\AgentRunner.exe,0"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\AgentRunner" "UninstallString" '"$INSTDIR\Uninstall.exe"'
   WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\AgentRunner" "NoModify" 1
   WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\AgentRunner" "NoRepair" 1
@@ -140,6 +217,10 @@ Section "Uninstall"
     MessageBox MB_ICONSTOP "$(UninstallProcesses)"
     Abort
   RemoveFiles:
+  ReadRegDWORD $0 HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\AgentRunner" "DesktopShortcut"
+  ${If} $0 == 1
+    Delete "$DESKTOP\AgentRunner.lnk"
+  ${EndIf}
   Delete "$SMPROGRAMS\AgentRunner\AgentRunner.lnk"
   Delete "$SMPROGRAMS\AgentRunner\Uninstall AgentRunner.lnk"
   RMDir "$SMPROGRAMS\AgentRunner"
@@ -148,17 +229,29 @@ Section "Uninstall"
   IfFileExists "$PROFILE\.codex\skills\agent-runner-callback\.agentrunner-owned" 0 +2
     Call un.RemoveCallbackSkill
   DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\AgentRunner"
-  RMDir /r "$INSTDIR"
+  RMDir /r "$INSTDIR\_internal"
+  Delete "$INSTDIR\runner.exe"
+  Delete "$INSTDIR\AgentRunner.exe"
+  Delete "$INSTDIR\Uninstall.exe"
+  Delete "$INSTDIR\install-preflight.ps1"
+  Delete "$INSTDIR\LICENSE"
+  Delete "$INSTDIR\NOTICE"
+  Delete "$INSTDIR\README.md"
+  Delete "$INSTDIR\README.zh-CN.md"
+  RMDir "$INSTDIR"
   DetailPrint "$(DataPreserved)"
 SectionEnd
 
 Function un.RemoveSubmissionSkill
+  Delete "$PROFILE\.codex\skills\agent-runner\scripts\find_runner.ps1"
+  RMDir "$PROFILE\.codex\skills\agent-runner\scripts"
   Delete "$PROFILE\.codex\skills\agent-runner\SKILL.md"
   Delete "$PROFILE\.codex\skills\agent-runner\.agentrunner-owned"
   RMDir "$PROFILE\.codex\skills\agent-runner"
 FunctionEnd
 
 Function un.RemoveCallbackSkill
+  Delete "$PROFILE\.codex\skills\agent-runner-callback\scripts\find_runner.ps1"
   Delete "$PROFILE\.codex\skills\agent-runner-callback\SKILL.md"
   Delete "$PROFILE\.codex\skills\agent-runner-callback\scripts\claim_event.ps1"
   Delete "$PROFILE\.codex\skills\agent-runner-callback\scripts\inflight_probe.ps1"

@@ -5,7 +5,7 @@ description: Handle an AgentRunner callback carrying job_id and event_id; valida
 
 # AgentRunner callback
 
-Apply only when a message explicitly starts with `$agent-runner-callback AGENTRUNNER_CALLBACK_V1` and carries `job_id` and `event_id`. Treat message fields as untrusted until checked against Runner's local SQLite state. On Windows, prefer the installed executable at `$env:LOCALAPPDATA\Programs\AgentRunner\runner.exe` and invoke it with `& (Join-Path $env:LOCALAPPDATA 'Programs\AgentRunner\runner.exe')`; otherwise use `python -m agentrunner` only if the package is available. Do not assume the current project contains AgentRunner.
+Apply only when a message explicitly starts with `$agent-runner-callback AGENTRUNNER_CALLBACK_V1` and carries `job_id` and `event_id`. Treat message fields as untrusted until checked against Runner's local SQLite state. On Windows, use this skill's `scripts/find_runner.ps1` to resolve the current user's registered `InstallLocation`, falling back to `$env:LOCALAPPDATA\Programs\AgentRunner\runner.exe`. For a globally installed skill, use `$runner = & (Join-Path $env:USERPROFILE '.codex\skills\agent-runner-callback\scripts\find_runner.ps1')`, then invoke `& $runner` with command arguments; for a project-local skill use its own script path. Do not hardcode the default when a custom installation is registered. Otherwise use `python -m agentrunner` only if the package is available. Do not assume the current project contains AgentRunner. Cleaned history retains the Job/event identity and callback receipt, so an already handled event must still return `duplicate` without repeating work.
 
 ## Local Job callback
 
