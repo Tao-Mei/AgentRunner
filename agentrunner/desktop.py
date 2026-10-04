@@ -38,7 +38,7 @@ WORDS = {
         "stop_confirm": "Let active steps finish, skip remaining steps, and run finalizers for {job_id}?",
         "paused": "Next steps paused", "stopping": "Stopping after active steps",
         "question": "Question", "preset": "Quick question", "language": "Language",
-        "close_to_tray": "Close window to tray", "status": "Status", "created": "Created",
+        "close_to_tray": "Close window to tray", "status": "Status", "created": "Created", "elapsed": "Run time", "total_elapsed": "Total run time",
         "name": "Name / ID", "step": "Step", "attempts": "Attempts", "progress": "Progress", "error": "Error",
         "select": "Select a job", "no_chat": "This job has no originating Codex chat.",
         "empty_question": "Enter a question or choose a preset.",
@@ -66,7 +66,7 @@ WORDS = {
         "stop_confirm": "让 {job_id} 的当前步骤执行完，跳过后续步骤，再运行收尾步骤吗？",
         "paused": "后续步骤已暂停", "stopping": "当前步骤结束后停止",
         "question": "自定义问题", "preset": "常见问题", "language": "界面语言",
-        "close_to_tray": "点击关闭时收起到托盘", "status": "状态", "created": "创建时间",
+        "close_to_tray": "点击关闭时收起到托盘", "status": "状态", "created": "创建时间", "elapsed": "已运行", "total_elapsed": "总计运行",
         "name": "名称 / 编号", "step": "步骤", "attempts": "尝试次数", "progress": "进度", "error": "错误",
         "select": "请选择任务", "no_chat": "此任务没有配置原 Codex 聊天。",
         "empty_question": "请输入问题或选择常见问题。",
@@ -117,6 +117,33 @@ WORDS['zh'].update({
     'metadata_error': '此任务已不在列表中。',
     'note_save_failed': '部分备注未能保存。请先复制内容或处理保存错误，再关闭或清理历史。',
 })
+
+
+def elapsed_seconds(job: dict, now: datetime | None = None) -> int | None:
+    """Wall time from recorded start; unknown outcomes have no invented end."""
+    try:
+        start = datetime.fromisoformat(job['started_at'])
+        if start.tzinfo is None:
+            return None
+        if job['status'] in {'COMPLETED', 'FAILED', 'CANCELLED'}:
+            end = datetime.fromisoformat(job['finished_at'])
+        elif job['status'] in {'RUNNING', 'FINALIZING', 'RESUMING'}:
+            end = now or datetime.now(timezone.utc)
+        else:
+            return None
+        if end.tzinfo is None:
+            return None
+        return max(0, int((end - start).total_seconds()))
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def duration_text(seconds: int | None) -> str:
+    if seconds is None:
+        return '—'
+    hours, remainder = divmod(seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return f'{hours:02d}:{minutes:02d}:{seconds:02d}'
 
 
 def application_icon() -> QIcon:
@@ -293,6 +320,10 @@ class RunnerWindow(QMainWindow):
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.refresh)
         self.timer.start(2000)
+        self._timing_jobs = {}
+        self.elapsed_timer = QTimer(self)
+        self.elapsed_timer.timeout.connect(self._refresh_elapsed)
+        self.elapsed_timer.start(1000)
         self.show_timer = QTimer(self)
         self.show_timer.timeout.connect(self._poll_show_requests)
         self.show_timer.start(700)
@@ -334,7 +365,7 @@ class RunnerWindow(QMainWindow):
         left = QWidget()
         left_layout = QVBoxLayout(left)
         left_layout.setContentsMargins(0, 0, 0, 0)
-        self.jobs_table = QTableWidget(0, 5)
+        self.jobs_table = QTableWidget(0, 6)
         self.jobs_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.jobs_table.setEditTriggers(QTableWidget.EditTrigger.DoubleClicked | QTableWidget.EditTrigger.EditKeyPressed | QTableWidget.EditTrigger.AnyKeyPressed)
         self.jobs_table.itemSelectionChanged.connect(self._job_selected)
@@ -349,16 +380,27 @@ class RunnerWindow(QMainWindow):
         header.setStretchLastSection(True)
         self.jobs_table.setSortingEnabled(True)
         self.jobs_table.sortItems(2, Qt.SortOrder.DescendingOrder)
-        saved_header = self.settings.value('jobs_header_v2')
+        saved_header = self.settings.value('jobs_header_v3')
         if saved_header is not None:
             header.restoreState(saved_header)
         else:
-            old_header = self.settings.value('jobs_header_v1')
-            if old_header is not None:
-                header.restoreState(old_header)
-            header.moveSection(header.visualIndex(3), 0)
-            for column, width in enumerate((130, 78, 120, 36, 110)):
+            old_header = self.settings.value('jobs_header_v2') or self.settings.value('jobs_header_v1')
+            for column, width in enumerate((130, 78, 120, 36, 110, 100)):
                 self.jobs_table.setColumnWidth(column, width)
+            if old_header is not None:
+                # Decode the five-column state separately: restoring it directly
+                # into six sections can corrupt Qt's saved visual mapping.
+                old_table = QTableWidget(0, 5)
+                old = old_table.horizontalHeader()
+                if old.restoreState(old_header):
+                    for visual in range(5):
+                        logical = old.logicalIndex(visual)
+                        header.moveSection(header.visualIndex(logical), visual)
+                        header.resizeSection(logical, old.sectionSize(logical))
+                    header.setSortIndicator(old.sortIndicatorSection(), old.sortIndicatorOrder())
+            else:
+                header.moveSection(header.visualIndex(3), 0)
+            header.moveSection(header.visualIndex(5), header.visualIndex(4))
         header.sectionMoved.connect(self._save_columns)
         header.sortIndicatorChanged.connect(self._save_columns)
         left_layout.addWidget(self.jobs_table)
@@ -374,11 +416,13 @@ class RunnerWindow(QMainWindow):
         self.title_label = QLabel()
         self.title_label.setFont(QFont("Segoe UI", 13, QFont.Weight.DemiBold))
         self.status_label = QLabel()
+        self.elapsed_label = QLabel()
         self.error_label = QLabel()
         self.error_label.setWordWrap(True)
         self.progress = QProgressBar()
         right_layout.addWidget(self.title_label)
         right_layout.addWidget(self.status_label)
+        right_layout.addWidget(self.elapsed_label)
         self.note_input = QPlainTextEdit()
         self.note_input.setMaximumHeight(64)
         self.note_input.textChanged.connect(self._detail_note_changed)
@@ -441,7 +485,7 @@ class RunnerWindow(QMainWindow):
         self.refresh_button.setText(self.tr("refresh"))
         self.help_button.setText(self.tr('help'))
         self.clean_button.setText(self.tr('clean'))
-        self.jobs_table.setHorizontalHeaderLabels([self.tr(key) for key in ('name', 'status', 'created', 'locked', 'note')])
+        self.jobs_table.setHorizontalHeaderLabels([self.tr(key) for key in ('name', 'status', 'created', 'locked', 'note', 'elapsed')])
         self.jobs_table.horizontalHeaderItem(3).setText('L')
         self.jobs_table.horizontalHeaderItem(3).setToolTip(self.tr('lock'))
         self.note_input.setPlaceholderText(self.tr('note'))
@@ -471,7 +515,7 @@ class RunnerWindow(QMainWindow):
         self.refresh()
 
     def _save_columns(self, *args) -> None:
-        self.settings.setValue('jobs_header_v2', self.jobs_table.horizontalHeader().saveState())
+        self.settings.setValue('jobs_header_v3', self.jobs_table.horizontalHeader().saveState())
 
     def _lock_clicked(self, row: int, column: int) -> None:
         if column != 3:
@@ -568,6 +612,7 @@ class RunnerWindow(QMainWindow):
             QMessageBox.information(self, self.tr("exit"), self.tr("ask_busy"))
             return
         jobs = store.list_jobs()
+        self._timing_jobs = {job["id"]: job for job in jobs}
         blocking = [job["id"] for job in jobs if job["status"] in
                     {"CREATED", "RUNNING", "FINALIZING", "RESUMING", "UNKNOWN"} or
                     job["callback_status"] in {"PENDING", "SENDING", "UNKNOWN"}]
@@ -609,9 +654,36 @@ class RunnerWindow(QMainWindow):
         event.accept()
         QApplication.instance().quit()
 
+    def _set_elapsed_detail(self, job: dict, now: datetime | None = None) -> None:
+        key = 'total_elapsed' if job['status'] in {'COMPLETED', 'FAILED', 'CANCELLED'} else 'elapsed'
+        self.elapsed_label.setText(f"{self.tr(key)}: {duration_text(elapsed_seconds(job, now))}")
+
+    def _refresh_elapsed(self) -> None:
+        now = datetime.now(timezone.utc)
+        table = self.jobs_table
+        blocked = table.blockSignals(True)
+        sorting = table.isSortingEnabled()
+        table.setSortingEnabled(False)
+        for row in range(table.rowCount()):
+            item = table.item(row, 5)
+            if item is None:
+                continue
+            job = self._timing_jobs.get(item.data(Qt.ItemDataRole.UserRole))
+            if job:
+                seconds = elapsed_seconds(job, now)
+                item.sort_value = seconds if seconds is not None else -1
+                item.setText(duration_text(seconds))
+        # Defer reordering until the inline note editor has closed.
+        table.setSortingEnabled(sorting and self._table_editor is None)
+        table.blockSignals(blocked)
+        job = self._timing_jobs.get(self.selected_id)
+        if job:
+            self._set_elapsed_detail(job, now)
+
     def refresh(self) -> None:
         try:
             jobs = store.list_jobs()
+            self._timing_jobs = {job["id"]: job for job in jobs}
             if self.selected_id not in {job['id'] for job in jobs}:
                 self.selected_id = None
             if jobs and self.selected_id is None:
@@ -630,6 +702,7 @@ class RunnerWindow(QMainWindow):
                         self._notify(job, attention=status == "UNKNOWN")
             self.previous_statuses = latest
             if self._table_editor is not None:
+                self._refresh_elapsed()
                 # Rebuilding a table destroys its live editor and unsaved text.
                 if self.selected_id:
                     self._show_detail()
@@ -639,9 +712,9 @@ class RunnerWindow(QMainWindow):
             self.jobs_table.setRowCount(len(jobs))
             for row, job in enumerate(jobs):
                 values = (job.get('name') or job['id'], self.status_text(job['status']),
-                          job['created_at'], '', self._pending_notes.get(job['id'], job['note']))
+                          job['created_at'], '', self._pending_notes.get(job['id'], job['note']), duration_text(elapsed_seconds(job)))
                 sort_values = (values[0].casefold(), values[1], datetime.fromisoformat(job['created_at']).timestamp(),
-                               job['user_locked'], values[4].casefold())
+                               job['user_locked'], values[4].casefold(), elapsed_seconds(job) if elapsed_seconds(job) is not None else -1)
                 for col, value in enumerate(values):
                     item = JobItem(str(value), job['id'], sort_values[col])
                     if col != 4:
@@ -662,6 +735,7 @@ class RunnerWindow(QMainWindow):
             elif not jobs:
                 self.title_label.setText(self.tr('select'))
                 self.status_label.clear()
+                self.elapsed_label.clear()
                 self.error_label.clear()
                 self._note_job_id = None
                 self.note_input.blockSignals(True)
@@ -714,6 +788,7 @@ class RunnerWindow(QMainWindow):
                          self.tr("paused") if job["pause_requested"] else "")
         if job["callback_status"] == "UNKNOWN":
             control_state = f"{control_state} {self.tr('attention')}".strip()
+        self._set_elapsed_detail(job)
         self.status_label.setText(f"{self.tr('status')}: {self.status_text(job['status'])} {control_state}    {self.selected_id}")
         error = job.get("error") or next((f"{step['step_id']}: {step['error']}" for step in reversed(steps)
                                           if step.get("error")), "")

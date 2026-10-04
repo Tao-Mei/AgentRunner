@@ -185,7 +185,7 @@ def run(job_id: str) -> int:
             return 2
         store.transition(
             job_id, "RUNNING", "workflow_started", worker_pid=os.getpid(),
-            worker_create_time=processes.created_at(os.getpid()), started_at=store.utc_now(),
+            worker_create_time=processes.created_at(os.getpid()), started_at=job.get("started_at") or store.utc_now(),
         )
         write_ack(directory, "RUNNING")
         outcome = run_dag(job_id, spec)

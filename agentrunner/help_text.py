@@ -7,7 +7,7 @@ HELP = {
 在 Codex 聊天中调用 $agent-runner，描述任务、工作目录和预期结果。Runner 独立执行，Codex 不必等待；任务结束后会向原聊天回调。程序窗口本身不是 Codex 提问聊天框。
 
 2. 任务列表
-左侧包含运行中和历史任务，点击任务查看右侧详情。单条命令的“步骤”页可能为空，日志在“输出”页。进度只展示可确认的事实，不预测剩余时间。
+左侧包含运行中和历史任务，点击任务查看右侧详情。单条命令的“步骤”页可能为空，日志在“输出”页。进度只展示可确认的事实，不预测剩余时间。列表和详情显示运行时长（时:分:秒），运行中每秒更新，结束后固定为总时长；从开始执行计算，包含暂停、恢复等待和收尾，不包含启动前排队。缺少可靠时间时显示“—”。
 拖动表头可调整列顺序；点击表头切换升序或降序。列顺序和排序会保存。
 
 3. 控制任务
@@ -29,7 +29,7 @@ HELP = {
 Invoke $agent-runner in a Codex chat and describe the task, working directory and expected result. Runner executes independently and sends completion back to that chat. This window is a task viewer, not a general Codex chat box.
 
 2. Jobs
-The left list includes running jobs and history. Select a job to inspect details. A single command may have no Steps; its logs appear under Output. Progress shows known facts, not a predicted finish time.
+The left list includes running jobs and history. Select a job to inspect details. A single command may have no Steps; its logs appear under Output. Progress shows known facts, not a predicted finish time. Run time (hours:minutes:seconds) updates each second and becomes fixed on completion. It counts wall time from execution start, including pauses, recovery waits and finalizers, excluding initial queue time. Missing reliable timestamps show an em dash.
 Drag column headers to reorder them; click a header to toggle ascending and descending order. Display preferences are saved.
 
 3. Controls

@@ -11,7 +11,8 @@ from PySide6.QtGui import QCloseEvent, QFont, QFontDatabase
 from PySide6.QtWidgets import QAbstractItemDelegate, QApplication, QMessageBox
 from PySide6.QtTest import QTest
 from agentrunner import store
-from agentrunner.desktop import RunnerWindow, application_icon
+from agentrunner.desktop import RunnerWindow, application_icon, elapsed_seconds, duration_text
+from datetime import datetime, timezone, timedelta
 
 
 def main():
@@ -34,13 +35,53 @@ def main():
                 store.create_job({'id': job_id, 'command': ['cmd'], 'cwd': temporary, 'event_id': 'EVT-'+job_id})
                 with store.connect() as con:
                     con.execute("UPDATE jobs SET name=?,created_at=?,status='COMPLETED' WHERE id=?", (name, date, job_id))
+            start = '2026-10-04T00:00:00+00:00'
+            end = '2026-10-04T01:02:03+00:00'
+            for status in ('COMPLETED', 'FAILED', 'CANCELLED'):
+                fixture = dict(status=status, started_at=start, finished_at=end)
+                assert elapsed_seconds(fixture) == 3723
+                assert duration_text(elapsed_seconds(fixture)) == '01:02:03'
+            assert duration_text(90061) == '25:01:01'
+            assert elapsed_seconds(dict(status='RUNNING', started_at='2026-10-04T08:00:00+08:00'), datetime.fromisoformat(end)) == 3723
+            assert elapsed_seconds(dict(status='UNKNOWN', started_at=start)) is None
+            assert elapsed_seconds(dict(status='COMPLETED', started_at=start, finished_at=None)) is None
+            assert elapsed_seconds(dict(status='CREATED', started_at=None)) is None
+            assert elapsed_seconds(dict(status='RUNNING', started_at='invalid')) is None
+            assert elapsed_seconds(dict(status='RUNNING', started_at=end), datetime.fromisoformat(start)) == 0
+            with store.connect() as con:
+                con.execute("UPDATE jobs SET started_at=?,finished_at=? WHERE id=?", (start, end, ids[0]))
+                con.execute("UPDATE jobs SET status='RUNNING',started_at=? WHERE id=?", (store.utc_now(), ids[1]))
+            # Simulate existing five-column preferences before migration.
+            from PySide6.QtWidgets import QTableWidget
+            old_table = QTableWidget(0, 5)
+            old_header = old_table.horizontalHeader()
+            old_header.setSectionsMovable(True)
+            old_header.moveSection(old_header.visualIndex(1), 0)
+            settings.setValue('jobs_header_v2', old_header.saveState())
             window = RunnerWindow(ids[0])
             window.show()
             app.processEvents()
-            assert window.jobs_table.horizontalHeader().visualIndex(3) == 0
+            assert window.jobs_table.horizontalHeader().visualIndex(1) == 0, 'Preserve old column order'
+            assert window.jobs_table.item(0, 5) is not None
+            assert window.elapsed_label.text().endswith('01:02:03')
             assert window.jobs_table.horizontalHeaderItem(3).text() == 'L'
             assert window.jobs_table.horizontalHeaderItem(3).toolTip() == window.tr('lock')
             assert not hasattr(window, 'note_button') and not hasattr(window, 'lock_button')
+            window.jobs_table.sortItems(5, Qt.SortOrder.DescendingOrder)
+            assert window.jobs_table.item(0, 0).data(Qt.ItemDataRole.UserRole) == ids[0]
+            fixed_text = window.elapsed_label.text()
+            running_start = datetime.fromisoformat(store.get_job(ids[1])['started_at'])
+            with patch('agentrunner.desktop.datetime') as clock:
+                clock.fromisoformat.side_effect = datetime.fromisoformat
+                clock.now.return_value = running_start + timedelta(seconds=10)
+                window._refresh_elapsed()
+                running_item = next(window.jobs_table.item(row, 5) for row in range(2)
+                                    if window.jobs_table.item(row, 0).data(Qt.ItemDataRole.UserRole) == ids[1])
+                assert running_item.text() == '00:00:10'
+                clock.now.return_value = running_start + timedelta(seconds=11)
+                window._refresh_elapsed()
+                assert running_item.text() == '00:00:11'
+            assert window.elapsed_label.text() == fixed_text
             window.jobs_table.sortItems(0, Qt.SortOrder.AscendingOrder)
             window.refresh()
             assert window.jobs_table.item(0, 0).text() == 'Alpha'
@@ -97,6 +138,8 @@ def main():
             assert not window.jobs_table.item(row_for(ids[0]), 3).icon().isNull()
             window.grab().save(str(root / 'inline-history-preview.png'))
             with patch('agentrunner.desktop.QMessageBox.question', return_value=QMessageBox.StandardButton.Yes):
+                with store.connect() as con:
+                    con.execute("UPDATE jobs SET status='COMPLETED',finished_at=? WHERE id=?", (store.utc_now(), ids[1]))
                 window._clean_history()
             assert window.jobs_table.rowCount() == 1 and window.selected_id == ids[0]
             restored = RunnerWindow()
@@ -113,6 +156,8 @@ def main():
             assert store.get_job(ids[0])['note'] == 'closing draft'
             window._lock_clicked(row_for(ids[0]), 3)
             with patch('agentrunner.desktop.QMessageBox.question', return_value=QMessageBox.StandardButton.Yes):
+                with store.connect() as con:
+                    con.execute("UPDATE jobs SET status='COMPLETED',finished_at=? WHERE id=?", (store.utc_now(), ids[1]))
                 window._clean_history()
             assert window.selected_id is None and window.jobs_table.rowCount() == 0
             assert not window.ask_button.isEnabled() and not window.folder_button.isEnabled()
