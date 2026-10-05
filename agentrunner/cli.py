@@ -14,7 +14,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import callback, codex_command, environment, log_text, processes, store
+from . import DISPLAY_VERSION, callback, codex_command, environment, log_text, processes, store
 
 
 THREAD_ID = re.compile(r"^[0-9a-fA-F-]{36}$")
@@ -85,9 +85,20 @@ def launch_worker(job_id: str, event_id: str, module: str) -> tuple[dict[str, st
     return {"status": "UNKNOWN_SUBMISSION", "job_id": job_id, "error": "Worker acknowledgement timeout; inspect this job before resubmitting"}, worker
 
 
+def submission_metadata(name: str | None, note: str) -> tuple[str | None, str]:
+    if name is not None:
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError('Task name must be nonempty text')
+        name = name.strip()
+    if not isinstance(note, str):
+        raise ValueError('Task note must be text')
+    return name, note
+
+
 def submit(command: list[str], cwd: str, thread: str | None,
            pass_env: list[str] | None = None,
-           watch: list[str] | None = None) -> tuple[dict[str, str], subprocess.Popen[bytes] | None]:
+           watch: list[str] | None = None, name: str | None = None, note: str = "") -> tuple[dict[str, str], subprocess.Popen[bytes] | None]:
+    name, note = submission_metadata(name, note)
     directory = preflight(command, cwd, thread)
     names = environment.validate(pass_env)
     if watch is None:
@@ -99,21 +110,24 @@ def submit(command: list[str], cwd: str, thread: str | None,
     job_id = "JOB-" + uuid.uuid4().hex[:12]
     event_id = "EVT-" + uuid.uuid4().hex[:16]
     store.create_job({"id": job_id, "event_id": event_id, "command": command, "cwd": str(directory),
-                      "callback_thread": thread, "pass_env": names, "watch": watch})
+                      "callback_thread": thread, "pass_env": names, "watch": watch, "name": name, "note": note})
     return launch_worker(job_id, event_id, "agentrunner.worker")
 
 
-def submit_workflow(path: str, cwd: str | None, thread: str | None) -> tuple[dict[str, str], subprocess.Popen[bytes] | None]:
+def submit_workflow(path: str, cwd: str | None, thread: str | None, name: str | None = None, note: str = "") -> tuple[dict[str, str], subprocess.Popen[bytes] | None]:
     from . import workflow
     if thread and not THREAD_ID.fullmatch(thread):
         raise ValueError("Callback thread must be a UUID")
+    name, note = submission_metadata(name, note)
     spec = workflow.load(path, cwd)
+    if name is not None:
+        spec["name"] = name
     if thread:
         codex_command.remember()
     job_id = "JOB-" + uuid.uuid4().hex[:12]
     event_id = "EVT-" + uuid.uuid4().hex[:16]
     store.create_workflow_job(
-        {"id": job_id, "event_id": event_id, "cwd": spec["cwd"], "callback_thread": thread}, spec,
+        {"id": job_id, "event_id": event_id, "cwd": spec["cwd"], "callback_thread": thread, "note": note}, spec,
     )
     return launch_worker(job_id, event_id, "agentrunner.workflow_worker")
 
@@ -273,10 +287,13 @@ def main(argv: list[str] | None = None) -> int:
         description="Local detached command and workflow runner",
         epilog="ACCEPTED transfers execution to Runner. Codex callback needs --callback-thread and a working local codex queue; delivery is not exactly once. Inspect UNKNOWN_SUBMISSION by Job ID before resubmitting.",
     )
+    parser.add_argument("--version", action="version", version=f"AgentRunner {DISPLAY_VERSION}")
     sub = parser.add_subparsers(dest="action", required=True)
     run_parser = sub.add_parser("run", help="Submit a local command to a detached worker")
     run_parser.add_argument("--cwd", default=".")
     run_parser.add_argument("--callback-thread")
+    run_parser.add_argument("--name", help="Human-readable task name")
+    run_parser.add_argument("--note", default="", help="Initial editable note, such as the source project")
     run_parser.add_argument("--pause-goal", action="store_true", help="With explicit human authorization, pause an active Codex goal after handoff (experimental)")
     run_parser.add_argument("--pass-env", action="append", default=[])
     run_parser.add_argument("--watch", action="append", default=[])
@@ -284,6 +301,8 @@ def main(argv: list[str] | None = None) -> int:
     exec_parser = sub.add_parser("exec", help="Run a short command or promote it after a grace period")
     exec_parser.add_argument("--cwd", default=".")
     exec_parser.add_argument("--callback-thread")
+    exec_parser.add_argument("--name", help="Human-readable task name")
+    exec_parser.add_argument("--note", default="", help="Initial editable note, such as the source project")
     exec_parser.add_argument("--pass-env", action="append", default=[])
     exec_parser.add_argument("--watch", action="append", default=[])
     exec_parser.add_argument("--adaptive", action="store_true")
@@ -336,6 +355,8 @@ def main(argv: list[str] | None = None) -> int:
     submit_parser.add_argument("workflow")
     submit_parser.add_argument("--cwd")
     submit_parser.add_argument("--callback-thread")
+    submit_parser.add_argument("--name", help="Human-readable task name")
+    submit_parser.add_argument("--note", default="", help="Initial editable note, such as the source project")
     submit_parser.add_argument("--pause-goal", action="store_true")
     resume_parser = sub.add_parser("resume", help="Resume an UNKNOWN workflow from a verified checkpoint")
     resume_parser.add_argument("job_id")
@@ -357,7 +378,7 @@ def main(argv: list[str] | None = None) -> int:
                 goal_handoff.ensure_available(args.callback_thread)
             if args.action == "exec" and (args.grace_seconds < 0 or args.grace_seconds > 300):
                 raise ValueError("Grace seconds must be between 0 and 300")
-            result, worker = submit(command_args(args.command), args.cwd, args.callback_thread, args.pass_env, args.watch)
+            result, worker = submit(command_args(args.command), args.cwd, args.callback_thread, args.pass_env, args.watch, args.name, args.note)
             if result["status"] == "ACCEPTED" and args.action == "exec":
                 if args.adaptive:
                     try:
@@ -389,7 +410,7 @@ def main(argv: list[str] | None = None) -> int:
             if args.pause_goal:
                 from . import goal_handoff
                 goal_handoff.ensure_available(args.callback_thread)
-            result, _ = submit_workflow(args.workflow, args.cwd, args.callback_thread)
+            result, _ = submit_workflow(args.workflow, args.cwd, args.callback_thread, args.name, args.note)
             if result["status"] == "ACCEPTED":
                 result["handoff"] = "Workflow is owned by the detached supervisor; do not poll it from the Agent turn"
                 reveal_installed_runner(result)

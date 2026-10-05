@@ -7,8 +7,8 @@ import stat
 from . import store
 
 
-def update(job_id: str, *, locked: bool | None = None, note: str | None = None) -> bool:
-    if locked is None and note is None:
+def update(job_id: str, *, locked: bool | None = None, note: str | None = None, name: str | None = None) -> bool:
+    if locked is None and note is None and name is None:
         return False
     fields, values = [], []
     if locked is not None:
@@ -17,6 +17,9 @@ def update(job_id: str, *, locked: bool | None = None, note: str | None = None) 
     if note is not None:
         fields.append("note = ?")
         values.append(note)
+    if name is not None:
+        fields.append("name = ?")
+        values.append(name.strip() or None)
     with store.connect() as con:
         return bool(con.execute(
             f"UPDATE jobs SET {', '.join(fields)} WHERE id = ? AND archived = 0",

@@ -12,8 +12,20 @@ Unicode true
   !error "Pass /DOUT=... to makensis"
 !endif
 
-Name "AgentRunner 0.2 Development Preview"
-OutFile "${OUT}\AgentRunner-Setup-0.2.0-dev.exe"
+!ifndef VERSION
+  !error "Pass /DVERSION=... to makensis"
+!endif
+!ifndef WINVERSION
+  !error "Pass /DWINVERSION=... to makensis"
+!endif
+Name "AgentRunner ${VERSION}"
+VIProductVersion "${WINVERSION}"
+VIAddVersionKey /LANG=1033 "ProductName" "AgentRunner"
+VIAddVersionKey /LANG=1033 "ProductVersion" "${VERSION}"
+VIAddVersionKey /LANG=1033 "FileVersion" "${WINVERSION}"
+VIAddVersionKey /LANG=1033 "FileDescription" "AgentRunner installer"
+VIAddVersionKey /LANG=1033 "LegalCopyright" "Tao Mei"
+OutFile "${OUT}\AgentRunner-Setup-${VERSION}.exe"
 InstallDir "$LOCALAPPDATA\Programs\AgentRunner"
 InstallDirRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\AgentRunner" "InstallLocation"
 RequestExecutionLevel user
@@ -192,7 +204,7 @@ Section "AgentRunner" MainSection
   Registry:
   WriteUninstaller "$INSTDIR\Uninstall.exe"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\AgentRunner" "DisplayName" "AgentRunner"
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\AgentRunner" "DisplayVersion" "0.2.0-dev"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\AgentRunner" "DisplayVersion" "${VERSION}"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\AgentRunner" "Publisher" "Tao Mei"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\AgentRunner" "InstallLocation" "$INSTDIR"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\AgentRunner" "InstallerLanguage" "$LANGUAGE"

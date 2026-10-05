@@ -6,6 +6,8 @@ AgentRunner 让 AI Coding Agent 把已经规划好的、耗时的本地机器任
 
 ## 当前状态
 
+最新预览版：**0.2.0-preview.2**。运行中实时显示时长，结束后保留总时长；日期以本机当地时间显示。Codex 提交时附上任务名称和来源项目备注；名称与备注均可在列表和详情中直接编辑，自动保存。右侧显示可复制的任务编号。详情见[更新记录](CHANGELOG.md)。
+
 v0.1 是已验收的 Windows 本地开发者版。现在提供 v0.2 Windows 桌面预览版安装包，包含任务窗口、托盘、历史管理及 Codex 配套 Skill。该版本供早期试用，尚非稳定版；跨项目聊天及界面提问仍需进一步实测。
 
 当前已实现：
@@ -20,9 +22,9 @@ v0.1 是已验收的 Windows 本地开发者版。现在提供 v0.2 Windows 桌�
 
 ### Windows 桌面预览版
 
-[下载 Windows 安装包](https://github.com/Tao-Mei/AgentRunner/releases/download/v0.2.0-preview.1/AgentRunner-Setup-0.2.0-dev.exe) · [版本说明与 SHA256 校验文件](https://github.com/Tao-Mei/AgentRunner/releases/tag/v0.2.0-preview.1)
+[下载 Windows 安装包](https://github.com/Tao-Mei/AgentRunner/releases/download/v0.2.0-preview.2/AgentRunner-Setup-0.2.0-preview.2.exe) · [版本说明与 SHA256 校验文件](https://github.com/Tao-Mei/AgentRunner/releases/tag/v0.2.0-preview.2)
 
-1. 下载 `AgentRunner-Setup-0.2.0-dev.exe` 并双击运行；请选择安装包，不是 GitHub 的源码 ZIP。
+1. 下载 `AgentRunner-Setup-0.2.0-preview.2.exe` 并双击运行；请选择安装包，不是 GitHub 的源码 ZIP。
 2. 按向导选择安装位置及是否创建桌面快捷方式，完成后从开始菜单或快捷方式打开 AgentRunner。
 3. 在窗口中点击“使用帮助”查看操作说明。安装包自带 Python，并自动安装 Codex 配套 Skill。
 4. 如需聊天交接和回调，用户自行安装、配置 Codex，并按 Codex 的要求完成认证；随后在聊天中调用 `$agent-runner`。如果当前聊天未识别新 Skill，重新打开 Codex 后新建聊天再试。

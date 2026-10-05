@@ -215,12 +215,12 @@ def create_job(job: dict[str, Any]) -> None:
         with connect() as con:
             con.execute(
                 """INSERT INTO jobs
-                (id, command_json, pass_env_json, watch_json, cwd, status, created_at, callback_thread, event_id, callback_status)
-                VALUES (?, ?, ?, ?, ?, 'CREATED', ?, ?, ?, 'NOT_REQUESTED')""",
+                (id, command_json, pass_env_json, watch_json, cwd, status, created_at, callback_thread, event_id, callback_status, name, note)
+                VALUES (?, ?, ?, ?, ?, 'CREATED', ?, ?, ?, 'NOT_REQUESTED', ?, ?)""",
                 (
                     job["id"], json.dumps(job["command"], ensure_ascii=False), json.dumps(job.get("pass_env", [])),
                     json.dumps(job.get("watch", [])), job["cwd"],
-                    utc_now(), job.get("callback_thread"), job["event_id"],
+                    utc_now(), job.get("callback_thread"), job["event_id"], job.get("name"), job.get("note", ""),
                 ),
             )
             con.execute(
@@ -267,9 +267,9 @@ def create_workflow_job(job: dict[str, Any], spec: dict[str, Any]) -> None:
                     raise ValueError(f"Resource {name} already has capacity {existing['capacity']}")
             con.execute(
                 """INSERT INTO jobs
-                (id, kind, name, command_json, cwd, status, created_at, callback_thread, event_id, callback_status)
-                VALUES (?, 'workflow', ?, '[]', ?, 'CREATED', ?, ?, ?, 'NOT_REQUESTED')""",
-                (job["id"], spec["name"], job["cwd"], utc_now(), job.get("callback_thread"), job["event_id"]),
+                (id, kind, name, command_json, cwd, status, created_at, callback_thread, event_id, callback_status, note)
+                VALUES (?, 'workflow', ?, '[]', ?, 'CREATED', ?, ?, ?, 'NOT_REQUESTED', ?)""",
+                (job["id"], spec["name"], job["cwd"], utc_now(), job.get("callback_thread"), job["event_id"], job.get("note", "")),
             )
             con.execute(
                 "INSERT INTO events (job_id, at, kind, detail_json) VALUES (?, ?, 'created', '{}')",

@@ -18,20 +18,24 @@ if (-not (Test-Path -LiteralPath $pythonExe)) {
     throw 'Create .venv and install .[desktop] plus PyInstaller before building.'
 }
 
+$versionFile = Join-Path $buildRoot 'version-info.txt'
+$version = & $pythonExe (Join-Path $PSScriptRoot 'version_info.py') $versionFile | ConvertFrom-Json
+if ($LASTEXITCODE -ne 0) { throw 'Version resource generation failed' }
+
 Push-Location -LiteralPath $projectRoot
 try {
     # PyInstaller searches PATH for native DLLs. Keep unrelated apps (for
     # example Poppler's incompatible ICU) out of the Qt bundle.
     $env:PATH = @((Split-Path -Parent $pythonExe), "$env:WINDIR\System32", $env:WINDIR) -join ';'
     & $pythonExe -m PyInstaller --noconfirm --clean --onedir --console `
-        --name runner --paths $projectRoot --exclude-module PySide6 --icon "$projectRoot\agentrunner\assets\agentrunner.ico" `
+        --name runner --version-file $versionFile --paths $projectRoot --exclude-module PySide6 --icon "$projectRoot\agentrunner\assets\agentrunner.ico" `
         --add-data "$projectRoot\agentrunner\ui.html;agentrunner" `
         --distpath $distRoot --workpath (Join-Path $buildRoot 'runner') `
         --specpath $buildRoot (Join-Path $PSScriptRoot 'runner_exe.py')
     if ($LASTEXITCODE -ne 0) { throw "Console build failed: $LASTEXITCODE" }
 
     & $pythonExe -m PyInstaller --noconfirm --clean --onedir --windowed `
-        --name AgentRunner --paths $projectRoot --icon "$projectRoot\agentrunner\assets\agentrunner.ico" `
+        --name AgentRunner --version-file $versionFile --paths $projectRoot --icon "$projectRoot\agentrunner\assets\agentrunner.ico" `
         --add-data "$projectRoot\agentrunner\ui.html;agentrunner" `
         --add-data "$projectRoot\agentrunner\assets;agentrunner/assets" `
         --distpath $desktopDistRoot --workpath (Join-Path $buildRoot 'desktop') `
@@ -52,7 +56,7 @@ try {
 if (-not $SkipInstaller) {
     $compiler = 'C:\Program Files (x86)\NSIS\makensis.exe'
     if (-not (Test-Path -LiteralPath $compiler)) { throw "NSIS compiler missing: $compiler" }
-    & $compiler '/INPUTCHARSET' 'UTF8' "/DROOT=$projectRoot" "/DSTAGE=$stageRoot" "/DOUT=$distRoot" `
+    & $compiler '/INPUTCHARSET' 'UTF8' "/DROOT=$projectRoot" "/DSTAGE=$stageRoot" "/DOUT=$distRoot" "/DVERSION=$($version.display)" "/DWINVERSION=$($version.windows)" `
         (Join-Path $PSScriptRoot 'installer.nsi')
     if ($LASTEXITCODE -ne 0) { throw "Installer build failed: $LASTEXITCODE" }
 }

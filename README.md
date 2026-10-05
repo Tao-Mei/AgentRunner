@@ -6,6 +6,8 @@ AgentRunner hands deterministic, long-running local tasks from an AI coding agen
 
 ## Current status
 
+Latest preview: **0.2.0-preview.2**. Live elapsed time becomes a fixed total when a job ends; dates use local time. Codex submissions carry a task name and source-project note. Names and notes are editable in the table and details, with automatic saving; details show a selectable task ID. See the [changelog](CHANGELOG.md).
+
 Version 0.1 is the validated Windows-first developer baseline. A v0.2 Windows desktop preview installer is now available, including a task window, tray, history controls, and Codex Skills. This is an early preview, not a stable release; cross-project chat and desktop-question acceptance remains pending.
 
 The current implementation provides:
@@ -20,9 +22,9 @@ The current implementation provides:
 
 ### Windows desktop preview
 
-[Download the Windows installer](https://github.com/Tao-Mei/AgentRunner/releases/download/v0.2.0-preview.1/AgentRunner-Setup-0.2.0-dev.exe) · [Release notes and SHA256 checksums](https://github.com/Tao-Mei/AgentRunner/releases/tag/v0.2.0-preview.1)
+[Download the Windows installer](https://github.com/Tao-Mei/AgentRunner/releases/download/v0.2.0-preview.2/AgentRunner-Setup-0.2.0-preview.2.exe) · [Release notes and SHA256 checksums](https://github.com/Tao-Mei/AgentRunner/releases/tag/v0.2.0-preview.2)
 
-1. Download and run `AgentRunner-Setup-0.2.0-dev.exe`; choose the installer, not GitHub's source ZIP.
+1. Download and run `AgentRunner-Setup-0.2.0-preview.2.exe`; choose the installer, not GitHub's source ZIP.
 2. Choose an installation folder and optional desktop shortcut, then open AgentRunner from the Start menu or shortcut.
 3. Select **Help** for usage instructions. Python and the companion Codex Skills are included.
 4. For chat handoff and callbacks, install and configure Codex yourself and authenticate as required by Codex, then invoke `$agent-runner` in a chat. If the new Skills are not recognized, reopen Codex and try a new chat.

@@ -11,7 +11,7 @@ from PySide6.QtGui import QCloseEvent, QFont, QFontDatabase
 from PySide6.QtWidgets import QAbstractItemDelegate, QApplication, QMessageBox
 from PySide6.QtTest import QTest
 from agentrunner import store
-from agentrunner.desktop import RunnerWindow, application_icon, elapsed_seconds, duration_text
+from agentrunner.desktop import RunnerWindow, application_icon, elapsed_seconds, duration_text, local_date_text
 from datetime import datetime, timezone, timedelta
 
 
@@ -40,8 +40,12 @@ def main():
             for status in ('COMPLETED', 'FAILED', 'CANCELLED'):
                 fixture = dict(status=status, started_at=start, finished_at=end)
                 assert elapsed_seconds(fixture) == 3723
-                assert duration_text(elapsed_seconds(fixture)) == '01:02:03'
-            assert duration_text(90061) == '25:01:01'
+                assert duration_text(elapsed_seconds(fixture)) == '1h 2m 3s'
+            assert duration_text(90061) == '1d 1h 1m 1s'
+            assert duration_text(3723, 'zh') == '1小时2分3秒'
+            assert duration_text(0, 'zh') == '0秒'
+            assert local_date_text(start) == datetime.fromisoformat(start).astimezone().strftime('%Y-%m-%d %H:%M:%S')
+            assert local_date_text('invalid') == '—'
             assert elapsed_seconds(dict(status='RUNNING', started_at='2026-10-04T08:00:00+08:00'), datetime.fromisoformat(end)) == 3723
             assert elapsed_seconds(dict(status='UNKNOWN', started_at=start)) is None
             assert elapsed_seconds(dict(status='COMPLETED', started_at=start, finished_at=None)) is None
@@ -63,7 +67,11 @@ def main():
             app.processEvents()
             assert window.jobs_table.horizontalHeader().visualIndex(1) == 0, 'Preserve old column order'
             assert window.jobs_table.item(0, 5) is not None
-            assert window.elapsed_label.text().endswith('01:02:03')
+            assert window.elapsed_label.text().endswith(duration_text(3723, window.language))
+            assert ids[0] not in window.status_label.text()
+            assert ids[0] in window.job_id_label.text()
+            assert window.job_id_label.textInteractionFlags() & Qt.TextInteractionFlag.TextSelectableByMouse
+            assert window._task_name(dict(kind='command', name=None)) != ids[0]
             assert window.jobs_table.horizontalHeaderItem(3).text() == 'L'
             assert window.jobs_table.horizontalHeaderItem(3).toolTip() == window.tr('lock')
             assert not hasattr(window, 'note_button') and not hasattr(window, 'lock_button')
@@ -77,10 +85,10 @@ def main():
                 window._refresh_elapsed()
                 running_item = next(window.jobs_table.item(row, 5) for row in range(2)
                                     if window.jobs_table.item(row, 0).data(Qt.ItemDataRole.UserRole) == ids[1])
-                assert running_item.text() == '00:00:10'
+                assert running_item.text() == duration_text(10, window.language)
                 clock.now.return_value = running_start + timedelta(seconds=11)
                 window._refresh_elapsed()
-                assert running_item.text() == '00:00:11'
+                assert running_item.text() == duration_text(11, window.language)
             assert window.elapsed_label.text() == fixed_text
             window.jobs_table.sortItems(0, Qt.SortOrder.AscendingOrder)
             window.refresh()
@@ -154,6 +162,44 @@ def main():
                 assert not close_event.isAccepted() and window._pending_notes
             window._flush_notes()
             assert store.get_job(ids[0])['note'] == 'closing draft'
+            original = store.get_job(ids[0])
+            window.jobs_table.editItem(window.jobs_table.item(row_for(ids[0]), 0))
+            app.processEvents()
+            name_editor = window._table_editor
+            assert name_editor is not None
+            name_editor.setText('重新命名安装任务')
+            window.refresh()
+            window._refresh_elapsed()
+            assert window._table_editor is name_editor and name_editor.text() == '重新命名安装任务'
+            QTest.qWait(450)
+            assert store.get_job(ids[0])['name'] == '重新命名安装任务'
+            index = window.jobs_table.model().index(row_for(ids[0]), 0)
+            window.name_delegate.setModelData(name_editor, window.jobs_table.model(), index)
+            window.jobs_table.closeEditor(name_editor, QAbstractItemDelegate.EndEditHint.NoHint)
+            QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+            app.processEvents()
+            window.refresh()
+            assert window.title_label.text() == '重新命名安装任务'
+            window.title_label.setText('右侧修改名称')
+            window.refresh()
+            assert window.title_label.text() == '右侧修改名称'
+            window.jobs_table.selectRow(row_for(ids[0]))
+            window._flush_notes()
+            renamed = store.get_job(ids[0])
+            assert renamed['name'] == '右侧修改名称'
+            for field in ('id', 'event_id', 'callback_thread', 'command', 'status', 'started_at', 'finished_at'):
+                assert renamed[field] == original[field], f'Rename changed execution identity: {field}'
+            reopened = RunnerWindow(ids[0])
+            assert reopened.title_label.text() == '右侧修改名称'
+            reopened.close_checkbox.setChecked(False)
+            reopened.close()
+            window.title_label.setText('保存失败时保留')
+            with patch('agentrunner.desktop.history.update', side_effect=OSError('save unavailable')), patch('agentrunner.desktop.QMessageBox.warning'):
+                close_event = QCloseEvent()
+                window.closeEvent(close_event)
+                assert not close_event.isAccepted() and window._pending_names
+            window._flush_notes()
+            assert store.get_job(ids[0])['name'] == '保存失败时保留'
             window._lock_clicked(row_for(ids[0]), 3)
             with patch('agentrunner.desktop.QMessageBox.question', return_value=QMessageBox.StandardButton.Yes):
                 with store.connect() as con:

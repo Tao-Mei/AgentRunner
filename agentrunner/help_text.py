@@ -7,8 +7,8 @@ HELP = {
 在 Codex 聊天中调用 $agent-runner，描述任务、工作目录和预期结果。Runner 独立执行，Codex 不必等待；任务结束后会向原聊天回调。程序窗口本身不是 Codex 提问聊天框。
 
 2. 任务列表
-左侧包含运行中和历史任务，点击任务查看右侧详情。单条命令的“步骤”页可能为空，日志在“输出”页。进度只展示可确认的事实，不预测剩余时间。列表和详情显示运行时长（时:分:秒），运行中每秒更新，结束后固定为总时长；从开始执行计算，包含暂停、恢复等待和收尾，不包含启动前排队。缺少可靠时间时显示“—”。
-拖动表头可调整列顺序；点击表头切换升序或降序。列顺序和排序会保存。
+左侧包含运行中和历史任务，点击任务查看右侧详情。单条命令的“步骤”页可能为空，日志在“输出”页。进度只展示可确认的事实，不预测剩余时间。列表和详情显示运行时长（如“1小时2分3秒”），运行中每秒更新，结束后固定为总时长；从开始执行计算，包含暂停、恢复等待和收尾，不包含启动前排队。缺少可靠时间时显示“—”。
+拖动表头可调整列顺序；点击表头切换升序或降序。列顺序和排序会保存。创建时间转换为本机当地日期和时间。未命名历史任务以任务类型显示。Codex 提交新任务时会提供名称和来源项目备注；右侧详情直接显示可复制的任务编号。双击列表名称或在右侧名称框直接输入可重命名，两处同步并自动保存；改名不影响执行和回调，编号不变。
 
 3. 控制任务
 “取消任务”请求终止任务；“暂停后续步骤”只阻止新步骤开始，正在运行的步骤继续；“恢复步骤调度”继续执行；“当前步骤结束后停止”等待当前步骤完成，再运行收尾步骤。
@@ -29,8 +29,8 @@ HELP = {
 Invoke $agent-runner in a Codex chat and describe the task, working directory and expected result. Runner executes independently and sends completion back to that chat. This window is a task viewer, not a general Codex chat box.
 
 2. Jobs
-The left list includes running jobs and history. Select a job to inspect details. A single command may have no Steps; its logs appear under Output. Progress shows known facts, not a predicted finish time. Run time (hours:minutes:seconds) updates each second and becomes fixed on completion. It counts wall time from execution start, including pauses, recovery waits and finalizers, excluding initial queue time. Missing reliable timestamps show an em dash.
-Drag column headers to reorder them; click a header to toggle ascending and descending order. Display preferences are saved.
+The left list includes running jobs and history. Select a job to inspect details. A single command may have no Steps; its logs appear under Output. Progress shows known facts, not a predicted finish time. Run time (for example, “1h 2m 3s”) updates each second and becomes fixed on completion. It counts wall time from execution start, including pauses, recovery waits and finalizers, excluding initial queue time. Missing reliable timestamps show an em dash.
+Drag column headers to reorder them; click a header to toggle ascending and descending order. Display preferences are saved. Creation dates use local time on this computer. Unnamed history shows the task type. Codex supplies a name and source-project note for new submissions. The details area shows a selectable task ID. Double-click a name cell or edit the details name field to rename; changes synchronize and save automatically. Renaming does not affect execution or callbacks; the ID stays unchanged.
 
 3. Controls
 Cancel requests termination. Pause next steps prevents new steps starting; active steps continue. Resume steps continues scheduling. Stop after current steps lets active steps finish, then runs finalizers.
