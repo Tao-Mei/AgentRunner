@@ -32,3 +32,4 @@ packaging/*.log
 .vscode/
 .DS_Store
 Thumbs.db
+**/runner-location.ini

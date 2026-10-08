@@ -80,6 +80,7 @@ LangString EmptyFolder ${LANG_SIMPCHINESE} "请选择专用于 AgentRunner 的�
 Var ShortcutCheckbox
 Var DesktopShortcut
 Var PreviousInstall
+Var RunnerDataRoot
 
 Function .onInit
   !insertmacro MUI_LANGDLL_DISPLAY
@@ -129,6 +130,9 @@ FunctionEnd
 
 Section "AgentRunner" MainSection
   SetShellVarContext current
+  ReadEnvStr $RunnerDataRoot "AGENTRUNNER_HOME"
+  StrCmp $RunnerDataRoot "" 0 +2
+    StrCpy $RunnerDataRoot "$PROFILE\.agentrunner"
   Call ValidateDirectory
   IfFileExists "$PROFILE\.codex\skills\agent-runner\SKILL.md" 0 CheckCallbackCollision
   IfFileExists "$PROFILE\.codex\skills\agent-runner\.agentrunner-owned" CheckCallbackCollision 0
@@ -188,6 +192,8 @@ Section "AgentRunner" MainSection
     FileOpen $0 "$PROFILE\.codex\skills\agent-runner\.agentrunner-owned" w
     FileWrite $0 "AgentRunner 0.2 development preview"
     FileClose $0
+    WriteINIStr "$PROFILE\.codex\skills\agent-runner\scripts\runner-location.ini" "Runner" "Executable" "$INSTDIR\runner.exe"
+    WriteINIStr "$PROFILE\.codex\skills\agent-runner\scripts\runner-location.ini" "Runner" "DataRoot" "$RunnerDataRoot"
 
   CallbackSkill:
   IfFileExists "$PROFILE\.codex\skills\agent-runner-callback\SKILL.md" 0 CopyCallbackSkill
@@ -200,6 +206,8 @@ Section "AgentRunner" MainSection
     FileOpen $0 "$PROFILE\.codex\skills\agent-runner-callback\.agentrunner-owned" w
     FileWrite $0 "AgentRunner 0.2 development preview"
     FileClose $0
+    WriteINIStr "$PROFILE\.codex\skills\agent-runner-callback\scripts\runner-location.ini" "Runner" "Executable" "$INSTDIR\runner.exe"
+    WriteINIStr "$PROFILE\.codex\skills\agent-runner-callback\scripts\runner-location.ini" "Runner" "DataRoot" "$RunnerDataRoot"
 
   Registry:
   WriteUninstaller "$INSTDIR\Uninstall.exe"
@@ -255,6 +263,7 @@ Section "Uninstall"
 SectionEnd
 
 Function un.RemoveSubmissionSkill
+  Delete "$PROFILE\.codex\skills\agent-runner\scripts\runner-location.ini"
   Delete "$PROFILE\.codex\skills\agent-runner\scripts\find_runner.ps1"
   RMDir "$PROFILE\.codex\skills\agent-runner\scripts"
   Delete "$PROFILE\.codex\skills\agent-runner\SKILL.md"
@@ -263,6 +272,7 @@ Function un.RemoveSubmissionSkill
 FunctionEnd
 
 Function un.RemoveCallbackSkill
+  Delete "$PROFILE\.codex\skills\agent-runner-callback\scripts\runner-location.ini"
   Delete "$PROFILE\.codex\skills\agent-runner-callback\scripts\find_runner.ps1"
   Delete "$PROFILE\.codex\skills\agent-runner-callback\SKILL.md"
   Delete "$PROFILE\.codex\skills\agent-runner-callback\scripts\claim_event.ps1"

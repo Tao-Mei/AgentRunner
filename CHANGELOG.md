@@ -1,5 +1,17 @@
 # Changelog / 更新记录
 
+## Unreleased
+
+### English
+
+- Companion Skills locate the executable and task data root using installer-generated local manifests, avoiding redirected sandbox environment folders. Invalid/inaccessible registrations request repair or access rather than declaring the app uninstalled or switching databases.
+- Existing installer-owned Skills can be repaired without replacing application binaries. Sandbox permissions still apply. This source update does not replace the published preview.2 installer.
+
+### 简体中文
+
+- 配套 Skill 使用安装时生成的本机登记文件定位程序和任务数据目录，避免沙箱环境变量重定向导致找不到程序。失效或不可访问的登记会提示修复或权限问题，不再直接判断未安装或切换数据库。
+- 已安装且属于安装器的 Skill 可单独修复，无需替换程序文件。沙箱权限仍然有效；本次源码更新不替换已发布的 preview.2 安装包。
+
 ## 0.2.0-preview.2 — 2026-10-05
 
 ### English
